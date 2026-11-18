@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="robots" content="noindex" />
+    <title>Administração | Ingressos Fortaleza</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body class="admin">
+    <header class="topbar">
+      <div class="container topbar-content">
+        <a class="brand" href="/admin"><span class="brand-icon">🛠️</span><span>Administração<small>Ingressos Fortaleza</small></span></a>
+        <nav>
+          <a href="/">Ver loja</a>
+          <a href="#" id="logout" class="hidden">Sair</a>
+        </nav>
+      </div>
+    </header>
+
+    <!-- Login -->
+    <section id="login-view" class="container">
+      <div class="login-box">
+        <h2>Acesso restrito</h2>
+        <p style="color:var(--muted)">Informe a senha de administrador para gerenciar os jogos.</p>
+        <div class="field">
+          <label for="admin-password">Senha</label>
+          <input id="admin-password" type="password" autocomplete="current-password" />
+        </div>
+        <div id="login-error" class="alert error hidden"></div>
+        <button class="btn btn-primary" id="login-btn" style="width:100%;margin-top:8px">Entrar</button>
+      </div>
+    </section>
+
+    <!-- Painel -->
+    <main id="panel-view" class="container admin-wrap hidden">
+      <div class="tabs" id="tabs">
+        <button class="tab active" data-tab="games">Jogos (CRUD)</button>
+        <button class="tab" data-tab="orders">Pedidos</button>
+        <button class="tab" data-tab="audit">Auditoria</button>
+        <button class="tab" data-tab="infra">Infraestrutura AWS</button>
+      </div>
+
+      <!-- Jogos -->
+      <section id="tab-games">
+        <div class="toolbar">
+          <h2>Jogos cadastrados</h2>
+          <button class="btn btn-primary" id="new-game">+ Novo jogo</button>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Jogo</th><th>Estádio</th><th>Data</th><th>Setor</th><th>Preço</th><th>Disponíveis</th><th>Banner</th><th>Ações</th></tr></thead>
+            <tbody id="games-body"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Pedidos -->
+      <section id="tab-orders" class="hidden">
+        <div class="toolbar"><h2>Pedidos (RDS)</h2><button class="btn btn-ghost btn-sm" id="refresh-orders">Atualizar</button></div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Pedido</th><th>Jogo</th><th>Cliente</th><th>E-mail</th><th>Qtd</th><th>Total</th><th>Data</th></tr></thead>
+            <tbody id="orders-body"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Auditoria -->
+      <section id="tab-audit" class="hidden">
+        <div class="toolbar"><h2>Auditoria das ações (DynamoDB)</h2><button class="btn btn-ghost btn-sm" id="refresh-audit">Atualizar</button></div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Horário</th><th>Ação</th><th>Recurso</th><th>Dados</th></tr></thead>
+            <tbody id="audit-body"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Infra -->
+      <section id="tab-infra" class="hidden">
+        <div class="toolbar"><h2>Serviços AWS</h2><button class="btn btn-ghost btn-sm" id="refresh-health">Atualizar</button></div>
+        <div class="aws-grid" id="aws-grid"></div>
+
+        <div class="toolbar"><h2>Teste de elasticidade (Parte 2)</h2></div>
+        <div class="stress-grid">
+          <div class="panel">
+            <h3 style="margin-top:0">Gerar carga de CPU</h3>
+            <p class="sub" style="margin-bottom:14px">Envia requisições à rota <code>/stress</code> pelo Load Balancer, ocupando as vCPUs das instâncias. Com a CPU média acima de 70% por mais de 1 minuto o Auto Scaling cria uma nova instância (máx. 3); abaixo de 25% ele remove. <b>Mantenha esta aba aberta</b> durante o teste.</p>
+            <div class="grid-2">
+              <div class="field"><label for="stress-conc">Intensidade (requisições simultâneas)</label><input id="stress-conc" type="number" min="1" max="12" value="6" /></div>
+              <div class="field"><label for="stress-mins">Duração (minutos)</label><input id="stress-mins" type="number" min="1" max="30" value="8" /></div>
+            </div>
+            <div style="display:flex;gap:10px">
+              <button class="btn btn-primary" id="stress-start">⚡ Iniciar carga</button>
+              <button class="btn btn-danger" id="stress-stop" disabled>Parar</button>
+            </div>
+            <div class="stat-row">
+              <div class="stat"><b id="st-elapsed">0:00</b><span>tempo</span></div>
+              <div class="stat"><b id="st-done">0</b><span>requisições OK</span></div>
+              <div class="stat"><b id="st-err">0</b><span>erros</span></div>
+              <div class="stat"><b id="st-hosts">0</b><span>instâncias respondendo</span></div>
+            </div>
+            <h4 class="mini-title">Instâncias que responderam (via ALB)</h4>
+            <ul class="host-list" id="host-list"><li><span>—</span><span>aguardando</span></li></ul>
+          </div>
+
+          <div class="panel">
+            <div class="toolbar" style="margin:0 0 6px"><h3 style="margin:0">Auto Scaling ao vivo</h3><small id="as-updated" class="muted-small"></small></div>
+            <div id="as-unavailable" class="alert info hidden"></div>
+            <div id="as-live">
+              <div class="as-counters">
+                <div class="as-counter big"><b id="as-inservice">–</b><span>instâncias em serviço</span></div>
+                <div class="as-counter"><b id="as-desired">–</b><span>desejadas</span></div>
+                <div class="as-counter"><b id="as-max">–</b><span>máximo</span></div>
+                <div class="as-counter"><b id="as-cpu">–</b><span>CPU média agora</span></div>
+              </div>
+              <div class="as-alarms" id="as-alarms"></div>
+              <div class="as-chart" id="as-chart"></div>
+              <div class="as-legend"><span class="lg cpu"></span>CPU média (%) <span class="lg inst"></span>instâncias em serviço <span class="lg lim"></span>limites 70% / 25%</div>
+              <h4 class="mini-title">Instâncias do grupo</h4>
+              <ul class="host-list" id="as-instances"></ul>
+              <h4 class="mini-title">Histórico de escala</h4>
+              <ul class="as-activities" id="as-activities"></ul>
+            </div>
+          </div>
+        </div>
+        <div class="tool-links">
+          <a class="tool-link" id="link-dashboard" href="https://console.aws.amazon.com/cloudwatch/home#dashboards:" target="_blank" rel="noopener">
+            <span class="tl-ico">📊</span><span><b>Dashboard do CloudWatch</b><small>CPU, instâncias, requisições, filas e vendas (abra o console pelo botão AWS do Learner Lab)</small></span>
+          </a>
+          <a class="tool-link" href="https://github.com/kl3berCosta/LojaArenaCastelao/blob/main/loadtest/README.md" target="_blank" rel="noopener">
+            <span class="tl-ico">🧪</span><span><b>Teste de carga com k6</b><small>Alternativa com relatório em gráficos (instruções no repositório)</small></span>
+          </a>
+        </div>
+      </section>
+    </main>
+
+    <!-- Formulário de jogo -->
+    <dialog id="game-dialog">
+      <form id="game-form" method="dialog">
+        <h2 id="dialog-title">Novo jogo</h2>
+        <div class="grid-2">
+          <div class="field"><label for="f-home">Mandante</label><input id="f-home" required /></div>
+          <div class="field"><label for="f-away">Visitante</label><input id="f-away" required /></div>
+        </div>
+        <div class="grid-2">
+          <div class="field"><label for="f-stadium">Estádio</label>
+            <select id="f-stadium" required>
+              <option value="Arena Castelão">Arena Castelão</option>
+              <option value="Estádio Presidente Vargas">Estádio Presidente Vargas</option>
+            </select></div>
+          <div class="field"><label for="f-date">Data e hora</label><input id="f-date" type="datetime-local" required /></div>
+        </div>
+        <div class="grid-2" id="create-stock">
+          <div class="field"><label for="f-price">Preço base (R$) — arquibancada</label><input id="f-price" type="number" min="0.01" step="0.01" /></div>
+          <div class="field"><label for="f-available">Capacidade total do estádio</label><input id="f-available" type="number" min="0" step="1" /></div>
+        </div>
+        <small id="create-stock-hint" style="color:var(--muted);display:block;margin:-6px 0 12px">Os setores são criados automaticamente: Norte e Sul (preço base), Cadeira Central (1,75×) e Camarote (3,5×). Ajuste depois, um a um, na edição.</small>
+        <div class="field hidden" id="edit-sectors">
+          <label>Setores (preço e ingressos restantes)</label>
+          <table class="sectors-edit"><thead><tr><th>Setor</th><th>Preço (R$)</th><th>Restantes</th></tr></thead><tbody id="f-sectors"></tbody></table>
+        </div>
+        <div class="field"><label for="f-category">Categoria exibida na vitrine</label><input id="f-category" placeholder="Arquibancada, Cadeira, Camarote..." /></div>
+        <div class="field"><label for="f-description">Descrição</label><textarea id="f-description" rows="2"></textarea></div>
+        <div class="field"><label for="f-banner">Banner do jogo (imagem)</label><input id="f-banner" type="file" accept="image/*" />
+          <small style="color:var(--muted)">O arquivo vai para o S3 e é redimensionado em segundo plano pelo worker (SQS).</small></div>
+        <div id="form-error" class="alert error hidden"></div>
+        <div class="actions">
+          <button type="button" class="btn btn-ghost" id="cancel-dialog">Cancelar</button>
+          <button type="submit" class="btn btn-primary" id="save-game">Salvar</button>
+        </div>
+      </form>
+    </dialog>
+
+    <script src="admin.js"></script>
+  </body>
+</html>
