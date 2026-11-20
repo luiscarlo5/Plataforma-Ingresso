@@ -13,7 +13,7 @@ Plataforma de alta disponibilidade e elasticidade na nuvem AWS para venda de ing
 
 - **Setores com preço próprio** (Arquibancada Norte e Sul, Cadeira Central, Camarote) escolhidos num **mapa clicável do estádio**.
 - **Reserva temporária de 10 minutos** no checkout: os ingressos saem do estoque ao reservar e voltam sozinhos se a compra não for confirmada (cronômetro na tela).
-- **Ingresso em PDF com QR code assinado**, gerado em segundo plano e guardado de forma privada no S3 (download por link temporário).
+- **Ingresso em PDF com QR code assinado**, gerado em segundo plano e guardado de forma privada no MinIO (a API entrega o arquivo depois de validar o token).
 - **E-mail de confirmação** com o link do ingresso, enviado via **Amazon SNS** (o SES é bloqueado no AWS Academy).
 - **Meus ingressos**: cada torcedor vê só as próprias compras e baixa os PDFs.
 - **Painel admin** (acesso apenas pelo endereço `/admin.html`): CRUD de jogos e setores, pedidos, auditoria e monitor de instâncias.
@@ -91,7 +91,7 @@ flowchart TD
 │       ├── app.js           # Monta o Express: middlewares + rotas de cada módulo
 │       ├── bootstrap.js     # Inicialização (schema do RDS, Redis)
 │       ├── config/          # Variáveis de ambiente e caminhos
-│       ├── lib/             # Infra compartilhada: db (RDS), cache (Redis), storage (S3), queue (SNS/SQS), localStore (dev)
+│       ├── lib/             # Infra compartilhada: db (RDS), cache (Redis), storage (MinIO), queue (RabbitMQ)
 │       ├── middlewares/     # auth (JWT/admin), upload (multer), errorHandler
 │       └── modules/
 │           ├── events/      # CRUD de jogos: model, controller, routes, validation
@@ -127,7 +127,7 @@ Cada recurso fica em sua pasta em `backend/src/modules/<recurso>/` com:
 | Camada | Arquivo | Responsabilidade |
 | :--- | :--- | :--- |
 | **Model** | `*.model.js` | Acesso a dados (RDS ou store local em dev). Sem conhecer HTTP. |
-| **Controller** | `*.controller.js` | Valida a entrada e orquestra model + S3 + cache + auditoria + fila; monta a resposta. |
+| **Controller** | `*.controller.js` | Valida a entrada e orquestra model + MinIO + cache + auditoria + fila; monta a resposta. |
 | **Routes** | `*.routes.js` | Liga URL/verbo HTTP aos controllers e aplica os middlewares (admin, usuário, upload). |
 | **View** | `frontend/` | Interface web que consome a API JSON. |
 
@@ -137,7 +137,7 @@ Para criar um novo CRUD, crie a pasta do módulo e registre suas rotas em `src/a
 
 ## 🐳 Executar com Docker Compose (Trabalho 2)
 
-Sobe tudo com um único comando: **PostgreSQL** (substitui o RDS) e **RabbitMQ** (substitui SNS/SQS), ambos gerenciados por nós, mais Redis, backend (API), worker e frontend (nginx).
+Sobe tudo com um único comando: **PostgreSQL** (substitui o RDS) **RabbitMQ** (substitui SNS/SQS) e **MinIO** (substitui o S3), todos gerenciados por nós, mais Redis, backend (API), worker e frontend (nginx).
 Pré-requisitos: Docker e Docker Compose v2.
 
 ```bash
@@ -152,10 +152,11 @@ Acesse **http://localhost:8080** (loja) e **http://localhost:8080/admin** (paine
 | Serviço | Imagem | Rede | Observação |
 |---|---|---|---|
 | `postgres` | `postgres:16-alpine` | `backend-net` | volume `pgdata`; **sem porta publicada** no host |
+| `minio` | `chainguard/minio` | `backend-net`, `frontend-net` | volume `miniodata`; bucket `stadium-files` criado pela API no boot; console em http://localhost:9001 (usuário/senha do `.env`). O `minio/minio` saiu do Docker Hub, por isso a imagem da Chainguard |
 | `rabbitmq` | `rabbitmq:3.13-management-alpine` | `backend-net` | volume `rabbitmqdata`; painel de gestão em http://localhost:15672 (usuário/senha do `.env`) |
 | `redis` | `redis:7-alpine` | `backend-net` | cache opcional |
-| `backend` | `backend/Dockerfile` | `backend-net`, `frontend-net` | espera Postgres, RabbitMQ e Redis saudáveis; cria o esquema (`schema.sql`) e os jogos iniciais no 1º boot |
-| `worker` | mesma imagem do backend (`node worker.js`) | `backend-net` | consome as filas do RabbitMQ (PDF, e-mail, banner); espera Postgres, RabbitMQ e backend saudáveis |
+| `backend` | `backend/Dockerfile` | `backend-net`, `frontend-net` | espera Postgres, RabbitMQ, MinIO e Redis saudáveis; cria o esquema (`schema.sql`) e os jogos iniciais no 1º boot |
+| `worker` | mesma imagem do backend (`node worker.js`) | `backend-net` | consome as filas do RabbitMQ (PDF, e-mail, banner); espera Postgres, RabbitMQ, MinIO e backend saudáveis |
 | `frontend` | `frontend/Dockerfile` (nginx) | `frontend-net` | serve o site e repassa a API para o `backend`; única porta publicada: 8080 |
 
 Comandos úteis:
@@ -167,20 +168,22 @@ docker compose down -v     # para e APAGA os dados
 ```
 
 Para rodar a API/testes fora do Docker com Postgres e Redis em containers:
-`docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d postgres redis rabbitmq` (publica 5432/6379/5672 só em 127.0.0.1).
+`docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d postgres redis rabbitmq minio` (publica 5432/6379/5672/9000 só em 127.0.0.1).
 
 **Filas (RabbitMQ):** a compra publica `PEDIDO_CONFIRMADO` no exchange fanout `order.events`, que entrega a mesma mensagem às filas `tickets.tasks` (PDF) e `notifications.tasks` (e-mail); `banner.tasks` redimensiona banners. Cada fila tem uma DLQ (`*.dlq`) para mensagens ilegíveis ou rejeitadas. Se o RabbitMQ cair e voltar, o worker se reinscreve sozinho.
 
-> Migração em andamento: Postgres e RabbitMQ já rodam em container. Os arquivos (S3 → MinIO) ainda usam o volume local `appdata`, e o DynamoDB segue como NoSQL.
+**Arquivos (MinIO):** um bucket com dois prefixos. `banners/*` (original e miniatura) tem leitura anônima e o nginx o expõe em `/files/banners/` (só `GET`). `tickets/*` (PDF do ingresso) é privado: só a API lê do MinIO e entrega o PDF depois de validar o token do dono. O código usa o `@aws-sdk/client-s3` com `endpoint` e `forcePathStyle`, porque o MinIO fala o protocolo S3.
+
+> Migração em andamento: Postgres, RabbitMQ e MinIO já rodam em container. O DynamoDB segue como NoSQL na AWS (precisa de credenciais no `.env`); o e-mail ainda sai pela caixa local `outbox`.
 
 ---
 
 ## 💻 Como Executar Localmente
 
 ### 1. Iniciar Banco e Cache Locais (Opcional)
-O **PostgreSQL e o RabbitMQ são obrigatórios**: sem `DATABASE_URL` e `RABBITMQ_URL` a API e o worker recusam subir (não existe mais modo em arquivo). Para rodar fora do Docker, use PostgreSQL, RabbitMQ e Redis em containers:
+O **PostgreSQL, o RabbitMQ e o MinIO são obrigatórios**: sem `DATABASE_URL`, `RABBITMQ_URL` e `MINIO_*` a API e o worker recusam subir (não existe mais modo em arquivo). Para rodar fora do Docker, use PostgreSQL, RabbitMQ, MinIO e Redis em containers:
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d postgres redis rabbitmq   # exige o .env da raiz
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d postgres redis rabbitmq minio   # exige o .env da raiz
 cd backend && cp .env.example .env   # DATABASE_URL: use a senha definida no .env da raiz
 export $(grep -v '^#' .env | xargs)  # ou: node --env-file=.env server.js
 ```
@@ -204,7 +207,7 @@ Acesse a interface no navegador em: `http://localhost:3000`
 cd backend
 npm test
 ```
-*Executa 18 testes: rotas da API, healthcheck, autenticação, validações, upload só de imagens, compras concorrentes por setor (nunca vende acima do estoque), setores, reserva temporária (confirmação, cancelamento, expiração e limpeza pelo worker), PDF + e-mail via fan-out, "Meus ingressos" (cada usuário só vê os próprios), log de auditoria e processamento desacoplado do Worker. Os testes usam pastas temporárias e podem ser repetidos à vontade. Exigem `DATABASE_URL` (PostgreSQL) e `RABBITMQ_URL` (RabbitMQ) reais (veja a seção acima) e usam pastas temporárias para uploads. Não rode o worker do Compose ao mesmo tempo: ele consumiria as mensagens dos testes.*
+*Executa 18 testes: rotas da API, healthcheck, autenticação, validações, upload só de imagens, compras concorrentes por setor (nunca vende acima do estoque), setores, reserva temporária (confirmação, cancelamento, expiração e limpeza pelo worker), PDF + e-mail via fan-out, "Meus ingressos" (cada usuário só vê os próprios), log de auditoria e processamento desacoplado do Worker. Os testes usam pastas temporárias e podem ser repetidos à vontade. Exigem PostgreSQL, RabbitMQ e MinIO reais (`DATABASE_URL`, `RABBITMQ_URL`, `MINIO_ENDPOINT`, `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY`; veja a seção acima). Não rode o worker do Compose ao mesmo tempo: ele consumiria as mensagens dos testes.*
 
 ---
 

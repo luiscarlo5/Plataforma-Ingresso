@@ -9,12 +9,21 @@ server {
 
     # Rotas da API: só estas vão para o backend. Qualquer outro caminho que não seja arquivo do site é 404 do nginx.
     # (/admin é a página admin.html; só /admin/elasticity é API.)
-    location ~ ^/(events|orders|auth|audit-logs|reservations|tickets|users|health|stress|uploads)(/|$) {
+    location ~ ^/(events|orders|auth|audit-logs|reservations|tickets|users|health|stress)(/|$) {
         proxy_pass http://backend:3000;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # Banners e miniaturas ficam no MinIO (bucket com leitura anônima só do prefixo banners/).
+    # Só GET/HEAD: o nginx nunca repassa escrita nem o prefixo privado tickets/.
+    location /files/banners/ {
+        limit_except GET HEAD { deny all; }
+        proxy_pass http://minio:9000/${MINIO_BUCKET}/banners/;
+        proxy_set_header Host minio:9000;
+        proxy_hide_header Set-Cookie;
     }
 
     location = /admin/elasticity {

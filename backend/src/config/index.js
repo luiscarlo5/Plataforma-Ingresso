@@ -25,10 +25,9 @@ module.exports = {
   // Endereço público do site (o do ALB na AWS), usado nos links enviados por e-mail
   APP_PUBLIC_URL: (process.env.APP_PUBLIC_URL || `http://localhost:${process.env.PORT || 3000}`).replace(/\/+$/, ''),
 
-  // Pastas dos uploads locais (até a migração para o MinIO)
+  // Pasta do outbox de e-mails (somente quando não há SNS configurado)
   BACKEND_DIR,
   DATA_DIR,
-  UPLOADS_DIR: process.env.UPLOADS_DIR || path.join(BACKEND_DIR, 'uploads'),
   FRONTEND_DIR: path.join(BACKEND_DIR, '..', 'frontend'),
   SCHEMA_FILE: path.join(BACKEND_DIR, 'schema.sql')
 };

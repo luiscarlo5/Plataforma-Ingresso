@@ -1,4 +1,4 @@
-// CONTROLLER de jogos: valida a entrada, orquestra model + S3 + auditoria + cache + fila e monta a resposta HTTP.
+// CONTROLLER de jogos: valida a entrada, orquestra model + MinIO + auditoria + cache + fila e monta a resposta HTTP.
 const crypto = require('node:crypto');
 const Event = require('./event.model');
 const { parseEventFields, parseSectorChanges } = require('./event.validation');
@@ -13,15 +13,13 @@ const eventKey = (id) => `events:${id}`;
 
 // Desacopla o processamento do banner (RabbitMQ -> worker). Se a publicação falhar o jogo já foi salvo:
 // marcamos o processamento como "failed" em vez de perder a requisição.
-async function enqueueBanner(eventId, s3Info, file, bannerUrl) {
+async function enqueueBanner(eventId, stored, file, bannerUrl) {
   try {
     return await queue.publishTask({
       eventId,
       bannerUrl,
-      s3Bucket: s3Info?.bucket,
-      s3Key: s3Info?.key,
-      localFilePath: s3Info?.localPath,
-      imageBase64: !s3Info?.bucket ? file.buffer.toString('base64') : null,
+      bucket: stored?.bucket,
+      key: stored?.key,
       fileName: file.originalname
     });
   } catch (error) {
@@ -67,11 +65,11 @@ async function create(req, res) {
   try {
     const eventId = `match-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
     let bannerUrl = values.bannerUrl || null;
-    let s3Info = null;
+    let stored = null;
 
     if (req.file) {
-      s3Info = await storage.saveBanner(req.file);
-      bannerUrl = s3Info.url;
+      stored = await storage.saveBanner(req.file);
+      bannerUrl = stored.url;
     }
 
     const newEvent = {
@@ -97,7 +95,7 @@ async function create(req, res) {
 
     let queueInfo = null;
     if (req.file) {
-      queueInfo = await enqueueBanner(eventId, s3Info, req.file, bannerUrl);
+      queueInfo = await enqueueBanner(eventId, stored, req.file, bannerUrl);
       if (!queueInfo) newEvent.processingStatus = 'failed';
     }
 
@@ -130,10 +128,10 @@ async function update(req, res) {
     delete updates.price;
     delete updates.available;
 
-    let s3Info = null;
+    let stored = null;
     if (req.file) {
-      s3Info = await storage.saveBanner(req.file);
-      updates.bannerUrl = s3Info.url;
+      stored = await storage.saveBanner(req.file);
+      updates.bannerUrl = stored.url;
       updates.thumbnailUrl = null; // o thumbnail antigo não corresponde mais ao novo banner
       updates.processingStatus = 'pending';
     }
@@ -151,7 +149,7 @@ async function update(req, res) {
     await invalidateCache(['events:list', eventKey(req.params.id)]);
 
     if (req.file) {
-      const queueInfo = await enqueueBanner(updated.id, s3Info, req.file, updated.bannerUrl);
+      const queueInfo = await enqueueBanner(updated.id, stored, req.file, updated.bannerUrl);
       if (!queueInfo) updated.processingStatus = 'failed';
     }
 

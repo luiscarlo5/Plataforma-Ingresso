@@ -1,3 +1,4 @@
+const { pipeline } = require('node:stream');
 // CONTROLLER de ingressos em PDF.
 const Order = require('../orders/order.model');
 const Event = require('../events/event.model');
@@ -62,9 +63,17 @@ async function download(req, res) {
     if (order.ticketStatus !== 'ready') {
       return res.status(202).send(page('Gerando seu ingresso...', 'O PDF fica pronto em alguns segundos. Esta página atualiza sozinha.', true));
     }
-    const target = await storage.ticketDownload(orderId);
-    if (target.url) return res.redirect(302, target.url); // presigned URL do S3 (5 minutos)
-    return res.type('application/pdf').sendFile(target.filePath);
+    const pdf = await storage.getTicket(orderId);
+    if (!pdf) return res.status(404).send(page('Ingresso não encontrado', 'O arquivo do ingresso não está disponível.'));
+    // O PDF é privado: a API lê do MinIO e repassa, depois de validar o token
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `inline; filename="ingresso-${orderId}.pdf"`,
+      ...(pdf.length ? { 'Content-Length': String(pdf.length) } : {})
+    });
+    return pipeline(pdf.stream, res, (err) => {
+      if (err) console.warn('[Ingresso] Falha ao enviar o PDF:', err.message);
+    });
   } catch (error) {
     return serverError(res, 'Erro ao baixar o ingresso.', error);
   }

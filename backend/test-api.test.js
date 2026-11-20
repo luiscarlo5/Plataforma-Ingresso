@@ -4,18 +4,18 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-// Os testes usam PostgreSQL e RabbitMQ de verdade (não existe mais modo em arquivo). Suba um com:
-//   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d postgres redis rabbitmq
-// e rode: DATABASE_URL=postgresql://USUARIO:SENHA@127.0.0.1:5432/stadiumdb RABBITMQ_URL=amqp://USUARIO:SENHA@127.0.0.1:5672 npm test
-if ((!process.env.DATABASE_URL && !process.env.DB_HOST) || !process.env.RABBITMQ_URL) {
-  console.error('Defina DATABASE_URL (PostgreSQL) e RABBITMQ_URL (RabbitMQ) para rodar os testes.');
+// Os testes usam PostgreSQL, RabbitMQ e MinIO de verdade (não existe mais modo em arquivo). Suba um com:
+//   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d postgres redis rabbitmq minio
+// e rode: DATABASE_URL=postgresql://USUARIO:SENHA@127.0.0.1:5432/stadiumdb RABBITMQ_URL=amqp://USUARIO:SENHA@127.0.0.1:5672 \
+//   MINIO_ENDPOINT=http://127.0.0.1:9000 MINIO_ACCESS_KEY=USUARIO MINIO_SECRET_KEY=SENHA npm test
+if ((!process.env.DATABASE_URL && !process.env.DB_HOST) || !process.env.RABBITMQ_URL || !process.env.MINIO_ENDPOINT) {
+  console.error('Defina DATABASE_URL (PostgreSQL), RABBITMQ_URL (RabbitMQ) e MINIO_ENDPOINT/MINIO_ACCESS_KEY/MINIO_SECRET_KEY (MinIO) para rodar os testes.');
   process.exit(1);
 }
 
-// Fila e uploads usam pastas temporárias próprias, para não sujar backend/data nem backend/uploads.
+// O outbox de e-mails usa uma pasta temporária própria, para não sujar backend/data.
 const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ingressos-test-'));
 process.env.DATA_DIR = path.join(tmpRoot, 'data');
-process.env.UPLOADS_DIR = path.join(tmpRoot, 'uploads');
 
 const app = require('./server.js');
 const worker = require('./worker.js');
@@ -77,7 +77,7 @@ test('GET /health responde status ok e informa os serviços AWS', async () => {
   assert.ok('ec2' in res.body.awsServices);
   assert.ok('rds' in res.body.awsServices);
   assert.ok('elasticache' in res.body.awsServices);
-  assert.ok('s3' in res.body.awsServices);
+  assert.ok('minio' in res.body.awsServices);
   assert.ok('dynamodb' in res.body.awsServices);
   assert.ok('sqsSns' in res.body.awsServices);
 });
@@ -599,4 +599,59 @@ test('Worker desacoplado processa tarefas da fila assíncrona', async () => {
   assert.equal(eventRes.status, 200);
   assert.ok(eventRes.body.thumbnailUrl, 'Thumbnail deve ter sido preenchido pelo worker');
   assert.equal(eventRes.body.processingStatus, 'completed');
+});
+
+// ---------- MinIO ----------
+const PIXEL_PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+  'base64'
+);
+const minioUrl = (key) => `${process.env.MINIO_ENDPOINT}/${process.env.MINIO_BUCKET || 'stadium-files'}/${key}`;
+
+test('MinIO: banner enviado vai para o bucket, a miniatura é pública e o PDF do ingresso é privado', async () => {
+  // 1) Admin cria um jogo com banner (multipart): o original fica em banners/raw/
+  const form = new FormData();
+  form.append('teamHome', 'Fortaleza');
+  form.append('teamAway', 'Bahia');
+  form.append('stadium', 'Arena Castelão');
+  form.append('date', '2026-12-01T16:00:00');
+  form.append('price', '90');
+  form.append('available', '50');
+  form.append('banner', new Blob([PIXEL_PNG], { type: 'image/png' }), 'banner.png');
+  const created = await fetchJson('/events', { method: 'POST', body: form });
+  assert.equal(created.status, 201);
+  const ev = created.body.event;
+  assert.match(ev.bannerUrl, /^\/files\/banners\/raw\/.+\.png$/, 'URL pública relativa, servida pelo nginx');
+
+  // 2) O worker redimensiona e grava a miniatura em banners/processed/
+  await worker.runOnce();
+  const after = await fetchJson(`/events/${ev.id}`);
+  assert.equal(after.body.processingStatus, 'completed');
+  assert.match(after.body.thumbnailUrl, /^\/files\/banners\/processed\/thumb-.+\.jpg$/);
+
+  // 3) banners/* tem leitura anônima direto no MinIO (é o que o nginx repassa)
+  const thumb = await fetch(minioUrl(after.body.thumbnailUrl.replace('/files/', '')));
+  assert.equal(thumb.status, 200);
+  assert.equal(thumb.headers.get('content-type'), 'image/jpeg');
+
+  // 4) Comprar gera o PDF em tickets/, que NÃO é público: só a API entrega, com token
+  const token = await getUserToken();
+  const buy = await fetchJson('/orders', {
+    method: 'POST', headers: authJson(token), body: JSON.stringify({ eventId: ev.id, quantity: 1 })
+  });
+  assert.equal(buy.status, 201);
+  await worker.runOnce();
+  const orderId = buy.body.order.id;
+  const anon = await fetch(minioUrl(`tickets/${orderId}.pdf`));
+  assert.ok([401, 403].includes(anon.status), `leitura anônima de tickets/ deve ser negada (veio ${anon.status})`);
+
+  const ready = await fetchJson(`/orders/${orderId}/ticket`, { headers: authJson(token) });
+  assert.equal(ready.status, 200);
+  const pdf = await fetch(`${baseUrl}${ready.body.downloadUrl}`);
+  assert.equal(pdf.status, 200);
+  assert.equal(pdf.headers.get('content-type'), 'application/pdf');
+  assert.equal((await pdf.arrayBuffer()).byteLength > 500, true, 'o PDF veio do MinIO pela API');
+
+  const forged = await fetch(`${baseUrl}/tickets/${orderId}/download?token=invalido`);
+  assert.equal(forged.status, 401);
 });
