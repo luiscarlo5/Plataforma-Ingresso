@@ -8,7 +8,7 @@ const { putMetric } = require('../../lib/metrics');
 const { serverError } = require('../../lib/http');
 const { MAX_TICKETS_PER_ORDER } = require('../../config');
 
-// Publica PEDIDO_CONFIRMADO (SNS -> fan-out para as filas de PDF e de e-mail).
+// Publica PEDIDO_CONFIRMADO (RabbitMQ: exchange fanout -> filas de PDF e de e-mail).
 // A compra já está gravada: uma falha aqui não desfaz a venda, só fica registrada.
 async function publishConfirmed(order) {
   try {
@@ -21,7 +21,7 @@ async function publishConfirmed(order) {
     });
     return info.provider;
   } catch (error) {
-    console.error('[SNS] Falha ao publicar PEDIDO_CONFIRMADO:', error);
+    console.error('[RabbitMQ] Falha ao publicar PEDIDO_CONFIRMADO:', error);
     await logCrudAction('ORDER_EVENT_FAILED', 'order', { orderId: order.id, reason: error.message });
     return null;
   }
