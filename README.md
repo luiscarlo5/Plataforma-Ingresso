@@ -135,14 +135,51 @@ Para criar um novo CRUD, crie a pasta do módulo e registre suas rotas em `src/a
 
 ---
 
+## 🐳 Executar com Docker Compose (Trabalho 2)
+
+Sobe tudo com um único comando: **PostgreSQL** (substitui o RDS, gerenciado por nós), Redis, backend (API), worker e frontend (nginx).
+Pré-requisitos: Docker e Docker Compose v2.
+
+```bash
+git clone <url-do-repositorio> && cd LojaArenaCastelao
+cp .env.example .env          # troque as senhas e o JWT_SECRET
+docker compose up --build -d
+docker compose ps             # postgres, redis e backend devem ficar "healthy"
+```
+
+Acesse **http://localhost:8080** (loja) e **http://localhost:8080/admin** (painel, senha = `ADMIN_PASSWORD`).
+
+| Serviço | Imagem | Rede | Observação |
+|---|---|---|---|
+| `postgres` | `postgres:16-alpine` | `backend-net` | volume `pgdata`; **sem porta publicada** no host |
+| `redis` | `redis:7-alpine` | `backend-net` | cache opcional |
+| `backend` | `backend/Dockerfile` | `backend-net`, `frontend-net` | espera Postgres/Redis saudáveis; cria o esquema (`schema.sql`) e os jogos iniciais no 1º boot |
+| `worker` | mesma imagem do backend (`node worker.js`) | `backend-net` | espera Postgres e backend saudáveis |
+| `frontend` | `frontend/Dockerfile` (nginx) | `frontend-net` | serve o site e repassa a API para o `backend`; única porta publicada: 8080 |
+
+Comandos úteis:
+```bash
+docker compose logs -f backend worker                                  # logs
+docker compose exec postgres sh -c 'psql -U $POSTGRES_USER -d $POSTGRES_DB -c "select * from orders;"'
+docker compose down        # para os serviços, mantém os dados (volume pgdata)
+docker compose down -v     # para e APAGA os dados
+```
+
+Para rodar a API/testes fora do Docker com Postgres e Redis em containers:
+`docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d postgres redis` (publica 5432/6379 só em 127.0.0.1).
+
+> Migração em andamento: o banco relacional já roda em container. Arquivos (S3 → MinIO) e fila (SNS/SQS → RabbitMQ) ainda usam o modo local, compartilhado entre API e worker pelo volume `appdata`; o DynamoDB segue como NoSQL.
+
+---
+
 ## 💻 Como Executar Localmente
 
 ### 1. Iniciar Banco e Cache Locais (Opcional)
 Sem `DATABASE_URL` a API usa um arquivo local (`backend/data/store.json`) — **apenas para desenvolvimento**.
 Para testar com PostgreSQL e Redis locais via Docker:
 ```bash
-docker compose up -d
-cd backend && cp .env.example .env   # já aponta para os containers
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d postgres redis   # exige o .env da raiz
+cd backend && cp .env.example .env   # DATABASE_URL: use a senha definida no .env da raiz
 export $(grep -v '^#' .env | xargs)  # ou: node --env-file=.env server.js
 ```
 
