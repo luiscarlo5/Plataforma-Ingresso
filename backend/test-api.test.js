@@ -4,8 +4,15 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-// Isolamento: cada execução usa pastas temporárias próprias (modo local), então os testes
-// não dependem de sobras de execuções anteriores e não sujam backend/data nem backend/uploads.
+// Os testes usam o PostgreSQL de verdade (não existe mais modo em arquivo). Suba um com:
+//   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d postgres redis
+// e rode: DATABASE_URL=postgresql://USUARIO:SENHA@127.0.0.1:5432/stadiumdb npm test
+if (!process.env.DATABASE_URL && !process.env.DB_HOST) {
+  console.error('Defina DATABASE_URL (PostgreSQL) para rodar os testes.');
+  process.exit(1);
+}
+
+// Fila e uploads usam pastas temporárias próprias, para não sujar backend/data nem backend/uploads.
 const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ingressos-test-'));
 process.env.DATA_DIR = path.join(tmpRoot, 'data');
 process.env.UPLOADS_DIR = path.join(tmpRoot, 'uploads');
@@ -519,14 +526,7 @@ test('Pedido antigo sem PDF: pedir o ingresso reenvia para a fila e o PDF é ger
   // Simula um pedido feito antes da geração de PDF: sem tarefas na fila e criado há 1 hora
   while (require('./src/lib/localStore').pullLocalTask()) { /* descarta o fan-out original */ }
   const pool = require('./src/lib/db').getPool();
-  if (pool) {
-    await pool.query("UPDATE orders SET created_at = NOW() - INTERVAL '1 hour' WHERE id = $1", [orderId]);
-  } else {
-    const storeFile = path.join(process.env.DATA_DIR, 'store.json');
-    const store = JSON.parse(fs.readFileSync(storeFile, 'utf8'));
-    store.orders.find((o) => o.id === orderId).createdAt = new Date(Date.now() - 3600 * 1000).toISOString();
-    fs.writeFileSync(storeFile, JSON.stringify(store));
-  }
+  await pool.query("UPDATE orders SET created_at = NOW() - INTERVAL '1 hour' WHERE id = $1", [orderId]);
 
   const first = await fetchJson(`/orders/${orderId}/ticket`, { headers: authJson(token) });
   assert.equal(first.status, 202);

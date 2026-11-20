@@ -25,10 +25,9 @@ module.exports = {
   // Endereço público do site (o do ALB na AWS), usado nos links enviados por e-mail
   APP_PUBLIC_URL: (process.env.APP_PUBLIC_URL || `http://localhost:${process.env.PORT || 3000}`).replace(/\/+$/, ''),
 
-  // Pastas usadas somente no modo desenvolvimento (sem AWS/RDS configurados)
+  // Pastas da fila e dos uploads locais (até a migração para RabbitMQ e MinIO)
   BACKEND_DIR,
   DATA_DIR,
-  DATA_FILE: path.join(DATA_DIR, 'store.json'),
   QUEUE_FILE: path.join(DATA_DIR, 'queue.json'),
   UPLOADS_DIR: process.env.UPLOADS_DIR || path.join(BACKEND_DIR, 'uploads'),
   FRONTEND_DIR: path.join(BACKEND_DIR, '..', 'frontend'),

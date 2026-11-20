@@ -1,54 +1,19 @@
-// Armazenamento em arquivo: APENAS modo desenvolvimento, quando não há RDS configurado.
-// Com o RDS configurado nada aqui é usado como fonte de dados.
+// Fila local de tarefas em arquivo (substitui SNS/SQS até a migração para o RabbitMQ).
+// Os DADOS (usuários, jogos, pedidos, reservas) ficam só no PostgreSQL: nada disso é gravado em arquivo.
 const fs = require('node:fs');
 const path = require('node:path');
-const { DATA_DIR, DATA_FILE, QUEUE_FILE, UPLOADS_DIR } = require('../config');
-const { seedEvents } = require('./seedEvents');
-const { buildSectors } = require('./sectorTemplate');
+const { DATA_DIR, QUEUE_FILE, UPLOADS_DIR } = require('../config');
 
 function ensureDirectories() {
   fs.mkdirSync(DATA_DIR, { recursive: true });
   fs.mkdirSync(path.join(UPLOADS_DIR, 'banners', 'raw'), { recursive: true });
   fs.mkdirSync(path.join(UPLOADS_DIR, 'banners', 'processed'), { recursive: true });
 
-  if (!fs.existsSync(DATA_FILE)) {
-    fs.writeFileSync(
-      DATA_FILE,
-      JSON.stringify({
-        users: [],
-        orders: [],
-        reservations: [],
-        events: seedEvents().map((ev) => ({ ...ev, sectors: buildSectors(ev.id, ev.price, ev.available) }))
-      }, null, 2),
-      'utf8'
-    );
-  }
-
   if (!fs.existsSync(QUEUE_FILE)) {
     fs.writeFileSync(QUEUE_FILE, JSON.stringify([], null, 2), 'utf8');
   }
 }
 
-function loadStore() {
-  ensureDirectories();
-  try {
-    const store = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
-    store.users = store.users || [];
-    store.orders = store.orders || [];
-    store.events = store.events || [];
-    store.reservations = store.reservations || [];
-    return store;
-  } catch (error) {
-    return { users: [], orders: [], events: [], reservations: [] };
-  }
-}
-
-function saveStore(store) {
-  ensureDirectories();
-  fs.writeFileSync(DATA_FILE, JSON.stringify(store, null, 2), 'utf8');
-}
-
-// Fila local de tarefas (substitui SNS/SQS em desenvolvimento)
 function pushLocalTask(message) {
   ensureDirectories();
   const queue = JSON.parse(fs.readFileSync(QUEUE_FILE, 'utf8'));
@@ -71,4 +36,4 @@ function pullLocalTask() {
   return null;
 }
 
-module.exports = { ensureDirectories, loadStore, saveStore, pushLocalTask, pullLocalTask };
+module.exports = { ensureDirectories, pushLocalTask, pullLocalTask };

@@ -1,5 +1,5 @@
-// AMAZON RDS (PostgreSQL) - conexão, pool e criação do esquema.
-// Quando o RDS está configurado ele é a ÚNICA fonte de verdade: se o banco falhar a API retorna erro,
+// POSTGRESQL (container gerenciado pela equipe) - conexão, pool e criação do esquema.
+// Quando o PostgreSQL está configurado ele é a ÚNICA fonte de verdade: se o banco falhar a API retorna erro,
 // em vez de gravar em arquivos locais (o que geraria estoque divergente entre as instâncias do ASG).
 const fs = require('node:fs');
 const { Pool } = require('pg');
@@ -7,7 +7,7 @@ const { SCHEMA_FILE } = require('../config');
 const { seedEvents } = require('./seedEvents');
 const { buildSectors } = require('./sectorTemplate');
 
-// O RDS PostgreSQL 16 exige SSL por padrão (rds.force_ssl=1).
+// Um RDS exige SSL por padrão (rds.force_ssl=1); o container do Compose não usa SSL.
 function getPgSsl() {
   const target = `${process.env.DATABASE_URL || ''} ${process.env.DB_HOST || ''}`;
   if (process.env.PG_SSL === 'true' || /rds\.amazonaws\.com/.test(target)) {
@@ -37,20 +37,22 @@ const isConfigured = () => !!getPgConfig();
 
 let pgPool = null;
 
-// Retorna o pool compartilhado, ou null quando não há RDS configurado (modo desenvolvimento).
+// Retorna o pool compartilhado. O PostgreSQL é obrigatório: sem DATABASE_URL (ou DB_HOST) falha alto,
+// em vez de gravar dados em arquivo local.
 function getPool() {
   const config = getPgConfig();
-  if (!config) return null;
+  if (!config) {
+    throw new Error('PostgreSQL não configurado: defina DATABASE_URL (ou DB_HOST/DB_USER/DB_PASSWORD/DB_NAME).');
+  }
   if (!pgPool) {
     pgPool = new Pool({ ...config, max: 10, idleTimeoutMillis: 30000, connectionTimeoutMillis: 5000 });
-    pgPool.on('error', (err) => console.warn('[RDS PostgreSQL] Erro em conexão ociosa:', err.message));
+    pgPool.on('error', (err) => console.warn('[PostgreSQL] Erro em conexão ociosa:', err.message));
   }
   return pgPool;
 }
 
 async function ensureRelationalSchema() {
   const pool = getPool();
-  if (!pool) return;
 
   // schema.sql é a fonte única do esquema (tabelas + índices).
   const ddl = fs.readFileSync(SCHEMA_FILE, 'utf8');
@@ -88,7 +90,7 @@ async function ensureRelationalSchema() {
         );
       }
     }
-    console.log('[RDS PostgreSQL] Schema relacional verificado com sucesso.');
+    console.log('[PostgreSQL] Schema relacional verificado com sucesso.');
   } finally {
     await client.query('SELECT pg_advisory_unlock(727274)').catch(() => {});
     client.release();
