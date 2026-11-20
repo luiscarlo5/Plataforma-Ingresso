@@ -18,7 +18,6 @@ function health(req, res) {
       ec2: process.env.EC2_INSTANCE_ID || 'executando-na-instancia-ec2',
       rds: !!(process.env.DATABASE_URL || process.env.DB_HOST),
       elasticache: !!(process.env.REDIS_HOST || process.env.REDIS_URL),
-      s3: !!process.env.S3_BUCKET_NAME,
       dynamodb: !!process.env.DYNAMODB_TABLE_NAME,
       minio: !!process.env.MINIO_ENDPOINT,
       rabbitmq: !!process.env.RABBITMQ_URL,

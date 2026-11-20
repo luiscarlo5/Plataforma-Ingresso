@@ -175,7 +175,7 @@ async function findById(id) {
   return result.rows.length ? rowToOrder(result.rows[0]) : null;
 }
 
-// Marcado pelo worker quando o PDF do ingresso fica pronto no S3
+// Marcado pelo worker quando o PDF do ingresso fica pronto no MinIO
 async function setTicketStatus(id, status) {
   const pool = db.getPool();
   await pool.query('UPDATE orders SET ticket_status = $1 WHERE id = $2', [status, id]);

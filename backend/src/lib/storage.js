@@ -24,7 +24,7 @@ const IMAGE_TYPES = {
 const isConfigured = () => !!(ENDPOINT && process.env.MINIO_ACCESS_KEY && process.env.MINIO_SECRET_KEY);
 
 let client = null;
-function s3() {
+function minio() {
   if (!isConfigured()) {
     throw new Error('MinIO não configurado: defina MINIO_ENDPOINT, MINIO_ACCESS_KEY e MINIO_SECRET_KEY.');
   }
@@ -50,12 +50,12 @@ async function ensureBucket({ attempts = 15, delayMs = 2000 } = {}) {
   for (let i = 1; i <= attempts; i++) {
     try {
       try {
-        await s3().send(new HeadBucketCommand({ Bucket: BUCKET }));
+        await minio().send(new HeadBucketCommand({ Bucket: BUCKET }));
       } catch (err) {
         if (!isNotFound(err)) throw err;
-        await s3().send(new CreateBucketCommand({ Bucket: BUCKET }));
+        await minio().send(new CreateBucketCommand({ Bucket: BUCKET }));
       }
-      await s3().send(new PutBucketPolicyCommand({
+      await minio().send(new PutBucketPolicyCommand({
         Bucket: BUCKET,
         Policy: JSON.stringify({
           Version: '2012-10-17',
@@ -84,7 +84,7 @@ const publicUrl = (key) => `/files/${key}`;
 
 async function put(subfolder, fileName, buffer, contentType) {
   const key = `${subfolder}/${fileName}`;
-  await s3().send(new PutObjectCommand({ Bucket: BUCKET, Key: key, Body: buffer, ContentType: contentType }));
+  await minio().send(new PutObjectCommand({ Bucket: BUCKET, Key: key, Body: buffer, ContentType: contentType }));
   return { url: publicUrl(key), bucket: BUCKET, key, fileName };
 }
 
@@ -107,8 +107,8 @@ async function loadImage(task) {
     return Buffer.from(task.imageBase64, 'base64');
   }
 
-  if (task.s3Bucket && task.s3Key) {
-    const obj = await s3().send(new GetObjectCommand({ Bucket: task.s3Bucket, Key: task.s3Key }));
+  if (task.bucket && task.key) {
+    const obj = await minio().send(new GetObjectCommand({ Bucket: task.bucket, Key: task.key }));
     return Buffer.from(await obj.Body.transformToByteArray());
   }
 
@@ -126,13 +126,13 @@ async function loadImage(task) {
 const ticketKey = (orderId) => `tickets/${orderId}.pdf`;
 
 async function saveTicket(orderId, buffer) {
-  await s3().send(new PutObjectCommand({ Bucket: BUCKET, Key: ticketKey(orderId), Body: buffer, ContentType: 'application/pdf' }));
+  await minio().send(new PutObjectCommand({ Bucket: BUCKET, Key: ticketKey(orderId), Body: buffer, ContentType: 'application/pdf' }));
 }
 
 // Lê o PDF do MinIO para a API repassar ao cliente. Retorna { stream, length } ou null se não existir.
 async function getTicket(orderId) {
   try {
-    const obj = await s3().send(new GetObjectCommand({ Bucket: BUCKET, Key: ticketKey(orderId) }));
+    const obj = await minio().send(new GetObjectCommand({ Bucket: BUCKET, Key: ticketKey(orderId) }));
     return { stream: obj.Body, length: obj.ContentLength };
   } catch (err) {
     if (err?.name === 'NoSuchKey' || err?.$metadata?.httpStatusCode === 404) return null;
