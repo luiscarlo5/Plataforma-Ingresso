@@ -2,9 +2,9 @@ const db = require('./lib/db');
 const { connectRedis } = require('./lib/cache');
 const { ensureDirectories } = require('./lib/localStore');
 
-// Inicialização dos serviços: Redis (opcional) e esquema do RDS. Sem RDS, prepara o store local (dev).
+// Inicialização dos serviços: Redis (opcional) e esquema do PostgreSQL (obrigatório: sem ele a API não sobe).
 async function bootstrap() {
-  if (!db.isConfigured()) ensureDirectories();
+  ensureDirectories(); // fila e uploads locais (temporário, até RabbitMQ/MinIO)
   await connectRedis();
   await db.ensureRelationalSchema();
 }

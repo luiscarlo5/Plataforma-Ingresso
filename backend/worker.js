@@ -68,7 +68,7 @@ async function processMessage(task, { receiveCount = 1 } = {}) {
     }
 
     const thumbnailUrl = await storage.saveThumbnail(resizedBuffer); // S3
-    await Event.update(task.eventId, { thumbnailUrl, processingStatus: 'completed' }); // RDS
+    await Event.update(task.eventId, { thumbnailUrl, processingStatus: 'completed' }); // PostgreSQL
     await invalidateCache(['events:list', `events:${task.eventId}`]); // Redis
     await logCrudAction('RESCALE_BANNER_COMPLETED', 'banner_processing', { // DynamoDB
       eventId: task.eventId, originalUrl: task.bannerUrl || null, thumbnailUrl
@@ -91,7 +91,7 @@ async function processTicket(task, { receiveCount = 1 } = {}) {
     if (!order?.id) throw new PermanentError('Mensagem sem pedido.');
     const pdf = await generateTicketPdf(order, event);
     await storage.saveTicket(order.id, pdf); // S3 (prefixo privado tickets/)
-    await Order.setTicketStatus(order.id, 'ready'); // RDS
+    await Order.setTicketStatus(order.id, 'ready'); // PostgreSQL
     await logCrudAction('TICKET_PDF_GENERATED', 'ticket', { orderId: order.id, bytes: pdf.length });
     putMetric('TicketPdfsGenerated');
   }, async (error) => {
@@ -214,10 +214,14 @@ async function runOnce() {
 let isRunning = true;
 
 async function startLoop() {
+  if (!db.isConfigured()) {
+    console.error('[Worker] PostgreSQL não configurado: defina DATABASE_URL. Encerrando.');
+    process.exit(1);
+  }
   console.log('========================================================');
   console.log('🚀 Worker desacoplado iniciado');
   console.log(`📡 Filas SQS: ${queue.configuredQueues().map((q) => q.kind).join(', ') || 'nenhuma (fila local)'}`);
-  console.log(`🗄️ RDS: ${db.isConfigured() ? 'Conectado' : 'Fallback store.json'}`);
+  console.log(`🗄️ PostgreSQL: ${db.isConfigured() ? 'Conectado' : 'NÃO CONFIGURADO'}`);
   console.log(`📦 S3: ${process.env.S3_BUCKET_NAME || 'Local uploads/'}`);
   console.log(`✉️ E-mail: ${notifier.isEnabled() ? 'Amazon SNS (e-mail)' : 'local (data/outbox)'}`);
   console.log('========================================================');

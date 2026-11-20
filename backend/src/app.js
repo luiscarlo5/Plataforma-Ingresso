@@ -15,7 +15,7 @@ const meRoutes = require('./modules/users/me.routes');
 
 const app = express();
 
-// O server.js troca esta promessa pela da inicialização (schema do RDS, Redis).
+// O server.js troca esta promessa pela da inicialização (schema do PostgreSQL, Redis).
 app.locals.ready = Promise.resolve();
 
 app.use(cors());
@@ -24,7 +24,7 @@ app.use(express.urlencoded({ extended: true }));
 app.use(express.static(FRONTEND_DIR, { extensions: ['html'] }));
 app.use('/uploads', express.static(UPLOADS_DIR));
 
-// Nenhuma rota de dados atende antes do schema do RDS estar pronto (o /health responde sempre,
+// Nenhuma rota de dados atende antes do schema do PostgreSQL estar pronto (o /health responde sempre,
 // para o ALB não derrubar a instância enquanto ela inicializa).
 app.use((req, res, next) => {
   if (req.path === '/health') return next();
