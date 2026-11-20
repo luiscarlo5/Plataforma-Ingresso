@@ -5,9 +5,11 @@ x-backend-env: &backend-env
   DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
   REDIS_URL: redis://redis:6379
   RABBITMQ_URL: amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@rabbitmq:5672
-  # Até a fase MinIO: uploads em modo local, em volume compartilhado entre API e worker
-  DATA_DIR: /data
-  UPLOADS_DIR: /data/uploads
+  MINIO_ENDPOINT: http://minio:9000
+  MINIO_BUCKET: ${MINIO_BUCKET}
+  MINIO_ACCESS_KEY: ${MINIO_ROOT_USER}
+  MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+  DATA_DIR: /data # só o outbox de e-mails (sem SNS)
   # O site é servido pelo container frontend (nginx), não pela API
   SERVE_FRONTEND: "false"
 
@@ -48,6 +50,30 @@ services:
       start_period: 20s
     restart: unless-stopped
 
+  # MinIO (S3 compatível): banners, miniaturas e PDFs dos ingressos.
+  # O minio/minio saiu do Docker Hub; usamos a imagem mantida pela Chainguard.
+  minio:
+    image: chainguard/minio:latest
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    volumes:
+      - miniodata:/data
+    # backend-net: API e worker; frontend-net: o nginx lê os banners públicos (só GET em /files/banners/)
+    networks: [backend-net, frontend-net]
+    ports:
+      # Console web do MinIO, só no localhost: http://localhost:9001
+      - "127.0.0.1:9001:9001"
+    healthcheck:
+      # A imagem não tem curl/wget: o bash abre um socket e confere o HTTP 200 de /minio/health/live
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/9000 && printf 'GET /minio/health/live HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && read -r l <&3 && [[ $$l == *200* ]]"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+
   redis:
     image: redis:7-alpine
     networks: [backend-net]
@@ -71,6 +97,8 @@ services:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+      minio:
+        condition: service_healthy
     networks: [backend-net, frontend-net]
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://localhost:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
@@ -92,6 +120,8 @@ services:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+      minio:
+        condition: service_healthy
       backend:
         condition: service_healthy
     networks: [backend-net]
@@ -99,6 +129,8 @@ services:
 
   frontend:
     build: ./frontend
+    environment:
+      MINIO_BUCKET: ${MINIO_BUCKET}
     ports:
       - "8080:80"
     depends_on:
@@ -115,3 +147,4 @@ volumes:
   pgdata:
   appdata:
   rabbitmqdata:
+  miniodata:
