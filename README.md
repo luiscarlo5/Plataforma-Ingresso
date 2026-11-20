@@ -137,7 +137,7 @@ Para criar um novo CRUD, crie a pasta do módulo e registre suas rotas em `src/a
 
 ## 🐳 Executar com Docker Compose (Trabalho 2)
 
-Sobe tudo com um único comando: **PostgreSQL** (substitui o RDS, gerenciado por nós), Redis, backend (API), worker e frontend (nginx).
+Sobe tudo com um único comando: **PostgreSQL** (substitui o RDS) e **RabbitMQ** (substitui SNS/SQS), ambos gerenciados por nós, mais Redis, backend (API), worker e frontend (nginx).
 Pré-requisitos: Docker e Docker Compose v2.
 
 ```bash
@@ -152,9 +152,10 @@ Acesse **http://localhost:8080** (loja) e **http://localhost:8080/admin** (paine
 | Serviço | Imagem | Rede | Observação |
 |---|---|---|---|
 | `postgres` | `postgres:16-alpine` | `backend-net` | volume `pgdata`; **sem porta publicada** no host |
+| `rabbitmq` | `rabbitmq:3.13-management-alpine` | `backend-net` | volume `rabbitmqdata`; painel de gestão em http://localhost:15672 (usuário/senha do `.env`) |
 | `redis` | `redis:7-alpine` | `backend-net` | cache opcional |
-| `backend` | `backend/Dockerfile` | `backend-net`, `frontend-net` | espera Postgres/Redis saudáveis; cria o esquema (`schema.sql`) e os jogos iniciais no 1º boot |
-| `worker` | mesma imagem do backend (`node worker.js`) | `backend-net` | espera Postgres e backend saudáveis |
+| `backend` | `backend/Dockerfile` | `backend-net`, `frontend-net` | espera Postgres, RabbitMQ e Redis saudáveis; cria o esquema (`schema.sql`) e os jogos iniciais no 1º boot |
+| `worker` | mesma imagem do backend (`node worker.js`) | `backend-net` | consome as filas do RabbitMQ (PDF, e-mail, banner); espera Postgres, RabbitMQ e backend saudáveis |
 | `frontend` | `frontend/Dockerfile` (nginx) | `frontend-net` | serve o site e repassa a API para o `backend`; única porta publicada: 8080 |
 
 Comandos úteis:
@@ -166,18 +167,20 @@ docker compose down -v     # para e APAGA os dados
 ```
 
 Para rodar a API/testes fora do Docker com Postgres e Redis em containers:
-`docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d postgres redis` (publica 5432/6379 só em 127.0.0.1).
+`docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d postgres redis rabbitmq` (publica 5432/6379/5672 só em 127.0.0.1).
 
-> Migração em andamento: o banco relacional já roda em container. Arquivos (S3 → MinIO) e fila (SNS/SQS → RabbitMQ) ainda usam o modo local, compartilhado entre API e worker pelo volume `appdata`; o DynamoDB segue como NoSQL.
+**Filas (RabbitMQ):** a compra publica `PEDIDO_CONFIRMADO` no exchange fanout `order.events`, que entrega a mesma mensagem às filas `tickets.tasks` (PDF) e `notifications.tasks` (e-mail); `banner.tasks` redimensiona banners. Cada fila tem uma DLQ (`*.dlq`) para mensagens ilegíveis ou rejeitadas. Se o RabbitMQ cair e voltar, o worker se reinscreve sozinho.
+
+> Migração em andamento: Postgres e RabbitMQ já rodam em container. Os arquivos (S3 → MinIO) ainda usam o volume local `appdata`, e o DynamoDB segue como NoSQL.
 
 ---
 
 ## 💻 Como Executar Localmente
 
 ### 1. Iniciar Banco e Cache Locais (Opcional)
-O **PostgreSQL é obrigatório**: sem `DATABASE_URL` a API e o worker recusam subir (não existe mais modo em arquivo). Para rodar fora do Docker, use PostgreSQL e Redis em containers:
+O **PostgreSQL e o RabbitMQ são obrigatórios**: sem `DATABASE_URL` e `RABBITMQ_URL` a API e o worker recusam subir (não existe mais modo em arquivo). Para rodar fora do Docker, use PostgreSQL, RabbitMQ e Redis em containers:
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d postgres redis   # exige o .env da raiz
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d postgres redis rabbitmq   # exige o .env da raiz
 cd backend && cp .env.example .env   # DATABASE_URL: use a senha definida no .env da raiz
 export $(grep -v '^#' .env | xargs)  # ou: node --env-file=.env server.js
 ```
@@ -201,7 +204,7 @@ Acesse a interface no navegador em: `http://localhost:3000`
 cd backend
 npm test
 ```
-*Executa 18 testes: rotas da API, healthcheck, autenticação, validações, upload só de imagens, compras concorrentes por setor (nunca vende acima do estoque), setores, reserva temporária (confirmação, cancelamento, expiração e limpeza pelo worker), PDF + e-mail via fan-out, "Meus ingressos" (cada usuário só vê os próprios), log de auditoria e processamento desacoplado do Worker. Os testes usam pastas temporárias e podem ser repetidos à vontade. Exigem `DATABASE_URL` apontando para um PostgreSQL real (veja a seção acima) e usam pastas temporárias para fila e uploads.*
+*Executa 18 testes: rotas da API, healthcheck, autenticação, validações, upload só de imagens, compras concorrentes por setor (nunca vende acima do estoque), setores, reserva temporária (confirmação, cancelamento, expiração e limpeza pelo worker), PDF + e-mail via fan-out, "Meus ingressos" (cada usuário só vê os próprios), log de auditoria e processamento desacoplado do Worker. Os testes usam pastas temporárias e podem ser repetidos à vontade. Exigem `DATABASE_URL` (PostgreSQL) e `RABBITMQ_URL` (RabbitMQ) reais (veja a seção acima) e usam pastas temporárias para uploads. Não rode o worker do Compose ao mesmo tempo: ele consumiria as mensagens dos testes.*
 
 ---
 
