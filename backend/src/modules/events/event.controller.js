@@ -20,8 +20,6 @@ async function enqueueBanner(eventId, s3Info, file, bannerUrl) {
       bannerUrl,
       s3Bucket: s3Info?.bucket,
       s3Key: s3Info?.key,
-      localFilePath: s3Info?.localPath,
-      imageBase64: !s3Info?.bucket ? file.buffer.toString('base64') : null,
       fileName: file.originalname
     });
   } catch (error) {

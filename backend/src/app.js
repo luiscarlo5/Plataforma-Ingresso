@@ -1,6 +1,6 @@
 const express = require('express');
 const cors = require('cors');
-const { FRONTEND_DIR, UPLOADS_DIR } = require('./config');
+const { FRONTEND_DIR } = require('./config');
 const errorHandler = require('./middlewares/errorHandler');
 
 const systemRoutes = require('./modules/system/system.routes');
@@ -28,7 +28,6 @@ if (process.env.SERVE_FRONTEND !== 'false') {
   app.use(express.static(FRONTEND_DIR, { extensions: ['html'] }));
 }
 
-app.use('/uploads', express.static(UPLOADS_DIR));
 
 // Nenhuma rota de dados atende antes do schema do PostgreSQL estar pronto (o /health responde sempre,
 // para o ALB não derrubar a instância enquanto ela inicializa).

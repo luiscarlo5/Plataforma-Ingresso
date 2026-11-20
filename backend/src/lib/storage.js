@@ -1,15 +1,17 @@
-// AMAZON S3 - Armazenamento de arquivos binários (banners e thumbnails).
-// A leitura pública dos objetos é concedida por bucket policy (ver infra/main.tf), não por ACL por objeto.
-// Sem S3 configurado (desenvolvimento) os arquivos vão para backend/uploads/.
-const fs = require('node:fs');
-const path = require('node:path');
+// MINIO - Armazenamento de arquivos (banners, miniaturas e PDFs dos ingressos).
+// O MinIO fala o protocolo S3, então usamos o @aws-sdk/client-s3 apontando para o nosso endpoint.
+//
+// Um único bucket, dois prefixos:
+//   banners/*  -> PÚBLICO (leitura anônima por política do bucket). O navegador lê pelo nginx em /files/banners/...
+//   tickets/*  -> PRIVADO. Só a API lê, e entrega o PDF depois de validar o token do dono do ingresso.
 const crypto = require('node:crypto');
-const { S3Client, PutObjectCommand, GetObjectCommand } = require('@aws-sdk/client-s3');
-const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
-const { AWS_REGION, UPLOADS_DIR, DATA_DIR } = require('../config');
+const {
+  S3Client, PutObjectCommand, GetObjectCommand,
+  HeadBucketCommand, CreateBucketCommand, PutBucketPolicyCommand
+} = require('@aws-sdk/client-s3');
 
-const BUCKET = process.env.S3_BUCKET_NAME;
-const s3 = BUCKET ? new S3Client({ region: AWS_REGION }) : null;
+const ENDPOINT = process.env.MINIO_ENDPOINT;
+const BUCKET = process.env.MINIO_BUCKET || 'stadium-files';
 
 // Somente imagens são aceitas como banner; a extensão vem do tipo MIME, nunca do nome enviado.
 const IMAGE_TYPES = {
@@ -19,19 +21,71 @@ const IMAGE_TYPES = {
   'image/gif': '.gif'
 };
 
-const publicUrl = (key) => `https://${BUCKET}.s3.${AWS_REGION}.amazonaws.com/${key}`;
+const isConfigured = () => !!(ENDPOINT && process.env.MINIO_ACCESS_KEY && process.env.MINIO_SECRET_KEY);
+
+let client = null;
+function s3() {
+  if (!isConfigured()) {
+    throw new Error('MinIO não configurado: defina MINIO_ENDPOINT, MINIO_ACCESS_KEY e MINIO_SECRET_KEY.');
+  }
+  if (!client) {
+    client = new S3Client({
+      endpoint: ENDPOINT,
+      region: 'us-east-1', // o MinIO ignora a região, mas o SDK exige uma
+      forcePathStyle: true, // http://minio:9000/<bucket>/<chave> (não <bucket>.minio:9000)
+      credentials: { accessKeyId: process.env.MINIO_ACCESS_KEY, secretAccessKey: process.env.MINIO_SECRET_KEY },
+      // Versões novas do SDK mandam cabeçalhos de checksum que nem todo MinIO aceita
+      requestChecksumCalculation: 'WHEN_REQUIRED',
+      responseChecksumValidation: 'WHEN_REQUIRED'
+    });
+  }
+  return client;
+}
+
+const isNotFound = (err) => err?.$metadata?.httpStatusCode === 404 || err?.name === 'NotFound' || err?.name === 'NoSuchBucket';
+
+// Cria o bucket se não existir e aplica a política: leitura anônima SÓ de banners/*. Idempotente.
+async function ensureBucket({ attempts = 15, delayMs = 2000 } = {}) {
+  let lastError;
+  for (let i = 1; i <= attempts; i++) {
+    try {
+      try {
+        await s3().send(new HeadBucketCommand({ Bucket: BUCKET }));
+      } catch (err) {
+        if (!isNotFound(err)) throw err;
+        await s3().send(new CreateBucketCommand({ Bucket: BUCKET }));
+      }
+      await s3().send(new PutBucketPolicyCommand({
+        Bucket: BUCKET,
+        Policy: JSON.stringify({
+          Version: '2012-10-17',
+          Statement: [{
+            Effect: 'Allow',
+            Principal: { AWS: ['*'] },
+            Action: ['s3:GetObject'],
+            Resource: [`arn:aws:s3:::${BUCKET}/banners/*`]
+          }]
+        })
+      }));
+      console.log(`[MinIO] Bucket "${BUCKET}" pronto (banners/* público, tickets/* privado).`);
+      return;
+    } catch (err) {
+      lastError = err;
+      if (!isConfigured()) break;
+      console.warn(`[MinIO] Tentativa ${i}/${attempts} falhou: ${err.message}`);
+      await new Promise((r) => setTimeout(r, delayMs));
+    }
+  }
+  throw lastError;
+}
+
+// URL pública relativa: o nginx repassa /files/banners/* para o bucket (mesma origem do site).
+const publicUrl = (key) => `/files/${key}`;
 
 async function put(subfolder, fileName, buffer, contentType) {
-  if (s3) {
-    const key = `${subfolder}/${fileName}`;
-    await s3.send(new PutObjectCommand({ Bucket: BUCKET, Key: key, Body: buffer, ContentType: contentType }));
-    return { url: publicUrl(key), bucket: BUCKET, key, fileName };
-  }
-
-  const localTarget = path.join(UPLOADS_DIR, subfolder, fileName);
-  fs.mkdirSync(path.dirname(localTarget), { recursive: true });
-  fs.writeFileSync(localTarget, buffer);
-  return { url: `/uploads/${subfolder}/${fileName}`, localPath: localTarget, fileName };
+  const key = `${subfolder}/${fileName}`;
+  await s3().send(new PutObjectCommand({ Bucket: BUCKET, Key: key, Body: buffer, ContentType: contentType }));
+  return { url: publicUrl(key), bucket: BUCKET, key, fileName };
 }
 
 // Banner original enviado pelo administrador (multer file) -> banners/raw/
@@ -53,13 +107,9 @@ async function loadImage(task) {
     return Buffer.from(task.imageBase64, 'base64');
   }
 
-  if (s3 && task.s3Bucket && task.s3Key) {
-    const obj = await s3.send(new GetObjectCommand({ Bucket: task.s3Bucket, Key: task.s3Key }));
+  if (task.s3Bucket && task.s3Key) {
+    const obj = await s3().send(new GetObjectCommand({ Bucket: task.s3Bucket, Key: task.s3Key }));
     return Buffer.from(await obj.Body.transformToByteArray());
-  }
-
-  if (task.localFilePath && fs.existsSync(task.localFilePath)) {
-    return fs.readFileSync(task.localFilePath);
   }
 
   if (task.bannerUrl && task.bannerUrl.startsWith('http')) {
@@ -72,33 +122,25 @@ async function loadImage(task) {
 }
 
 // ---------- Ingressos em PDF (PRIVADOS) ----------
-// Ficam em tickets/, fora do prefixo público banners/* da bucket policy: ninguém lê sem um link
-// temporário (presigned URL) gerado pela API para o dono do ingresso.
-// Em desenvolvimento ficam em backend/data/tickets (fora da pasta pública /uploads).
+// Ficam em tickets/, fora do prefixo público banners/*: ninguém lê sem passar pela API, que confere o token.
 const ticketKey = (orderId) => `tickets/${orderId}.pdf`;
-const localTicketPath = (orderId) => path.join(DATA_DIR, 'tickets', `${path.basename(orderId)}.pdf`);
 
 async function saveTicket(orderId, buffer) {
-  if (s3) {
-    await s3.send(new PutObjectCommand({ Bucket: BUCKET, Key: ticketKey(orderId), Body: buffer, ContentType: 'application/pdf' }));
-    return;
-  }
-  fs.mkdirSync(path.dirname(localTicketPath(orderId)), { recursive: true });
-  fs.writeFileSync(localTicketPath(orderId), buffer);
+  await s3().send(new PutObjectCommand({ Bucket: BUCKET, Key: ticketKey(orderId), Body: buffer, ContentType: 'application/pdf' }));
 }
 
-// Link temporário de download (5 minutos). Em desenvolvimento devolve o caminho do arquivo local.
-async function ticketDownload(orderId) {
-  if (s3) {
-    const url = await getSignedUrl(s3, new GetObjectCommand({
-      Bucket: BUCKET,
-      Key: ticketKey(orderId),
-      ResponseContentType: 'application/pdf',
-      ResponseContentDisposition: `inline; filename="ingresso-${orderId}.pdf"`
-    }), { expiresIn: 300 });
-    return { url };
+// Lê o PDF do MinIO para a API repassar ao cliente. Retorna { stream, length } ou null se não existir.
+async function getTicket(orderId) {
+  try {
+    const obj = await s3().send(new GetObjectCommand({ Bucket: BUCKET, Key: ticketKey(orderId) }));
+    return { stream: obj.Body, length: obj.ContentLength };
+  } catch (err) {
+    if (err?.name === 'NoSuchKey' || err?.$metadata?.httpStatusCode === 404) return null;
+    throw err;
   }
-  return { filePath: localTicketPath(orderId) };
 }
 
-module.exports = { IMAGE_TYPES, saveBanner, saveThumbnail, loadImage, saveTicket, ticketDownload };
+module.exports = {
+  BUCKET, IMAGE_TYPES, isConfigured, ensureBucket,
+  saveBanner, saveThumbnail, loadImage, saveTicket, getTicket
+};

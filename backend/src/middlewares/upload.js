@@ -1,7 +1,7 @@
 const multer = require('multer');
 const { IMAGE_TYPES } = require('../lib/storage');
 
-// Upload em memória (o arquivo segue para o S3). Aceita somente imagens, até 10 MB.
+// Upload em memória (o arquivo segue para o MinIO). Aceita somente imagens, até 10 MB.
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 10 * 1024 * 1024 },
