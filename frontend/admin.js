@@ -272,6 +272,7 @@ async function loadHealth() {
       ['⚡', 'ElastiCache Redis', svc.elasticache],
       ['🪣', 'S3 (banners)', svc.s3],
       ['📝', 'DynamoDB (auditoria)', svc.dynamodb],
+      ['🐰', 'RabbitMQ (filas + fan-out)', svc.rabbitmq],
       ['📬', 'SQS / SNS (banners)', svc.sqsSns],
       ['🔀', 'SNS fan-out (PDF + e-mail)', svc.orderFanout],
       ['✉️', 'E-mail via SNS', svc.emailSns],
