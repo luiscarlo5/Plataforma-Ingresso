@@ -4,7 +4,8 @@
 x-backend-env: &backend-env
   DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
   REDIS_URL: redis://redis:6379
-  # Até as fases MinIO/RabbitMQ: fila e uploads em modo local, em volume compartilhado entre API e worker
+  RABBITMQ_URL: amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@rabbitmq:5672
+  # Até a fase MinIO: uploads em modo local, em volume compartilhado entre API e worker
   DATA_DIR: /data
   UPLOADS_DIR: /data/uploads
   # O site é servido pelo container frontend (nginx), não pela API
@@ -28,6 +29,25 @@ services:
       retries: 10
     restart: unless-stopped
 
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD}
+    volumes:
+      - rabbitmqdata:/var/lib/rabbitmq
+    networks: [backend-net]
+    ports:
+      # Painel de gestão (filas, exchanges, DLQs), só no localhost: http://localhost:15672
+      - "127.0.0.1:15672:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 20s
+    restart: unless-stopped
+
   redis:
     image: redis:7-alpine
     networks: [backend-net]
@@ -49,6 +69,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
     networks: [backend-net, frontend-net]
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://localhost:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
@@ -67,6 +89,8 @@ services:
       - appdata:/data
     depends_on:
       postgres:
+        condition: service_healthy
+      rabbitmq:
         condition: service_healthy
       backend:
         condition: service_healthy
@@ -90,3 +114,4 @@ networks:
 volumes:
   pgdata:
   appdata:
+  rabbitmqdata:
