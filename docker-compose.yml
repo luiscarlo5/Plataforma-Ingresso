@@ -7,6 +7,8 @@ x-backend-env: &backend-env
   # Até as fases MinIO/RabbitMQ: fila e uploads em modo local, em volume compartilhado entre API e worker
   DATA_DIR: /data
   UPLOADS_DIR: /data/uploads
+  # O site é servido pelo container frontend (nginx), não pela API
+  SERVE_FRONTEND: "false"
 
 services:
   postgres:

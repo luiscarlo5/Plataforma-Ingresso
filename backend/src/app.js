@@ -21,7 +21,13 @@ app.locals.ready = Promise.resolve();
 app.use(cors());
 app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: true }));
-app.use(express.static(FRONTEND_DIR, { extensions: ['html'] }));
+
+// Só serve o site quando o backend roda sozinho (dev local e AWS do Trabalho 1). No Docker Compose o
+// frontend é o container nginx e o compose define SERVE_FRONTEND=false.
+if (process.env.SERVE_FRONTEND !== 'false') {
+  app.use(express.static(FRONTEND_DIR, { extensions: ['html'] }));
+}
+
 app.use('/uploads', express.static(UPLOADS_DIR));
 
 // Nenhuma rota de dados atende antes do schema do PostgreSQL estar pronto (o /health responde sempre,
