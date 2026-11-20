@@ -270,7 +270,7 @@ async function loadHealth() {
       ['💻', 'EC2 + ALB + ASG', true, h.instance?.hostname || 'ativo'],
       ['🐘', 'RDS PostgreSQL', svc.rds],
       ['⚡', 'ElastiCache Redis', svc.elasticache],
-      ['🪣', 'S3 (banners)', svc.s3],
+      ['🪣', 'MinIO (arquivos)', svc.minio],
       ['📝', 'DynamoDB (auditoria)', svc.dynamodb],
       ['🐰', 'RabbitMQ (filas + fan-out)', svc.rabbitmq],
       ['📬', 'SQS / SNS (banners)', svc.sqsSns],

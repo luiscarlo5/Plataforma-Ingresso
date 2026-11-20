@@ -164,7 +164,7 @@
         <div class="field"><label for="f-category">Categoria exibida na vitrine</label><input id="f-category" placeholder="Arquibancada, Cadeira, Camarote..." /></div>
         <div class="field"><label for="f-description">Descrição</label><textarea id="f-description" rows="2"></textarea></div>
         <div class="field"><label for="f-banner">Banner do jogo (imagem)</label><input id="f-banner" type="file" accept="image/*" />
-          <small style="color:var(--muted)">O arquivo vai para o S3 e é redimensionado em segundo plano pelo worker (RabbitMQ).</small></div>
+          <small style="color:var(--muted)">O arquivo vai para o MinIO e é redimensionado em segundo plano pelo worker (RabbitMQ).</small></div>
         <div id="form-error" class="alert error hidden"></div>
         <div class="actions">
           <button type="button" class="btn btn-ghost" id="cancel-dialog">Cancelar</button>
