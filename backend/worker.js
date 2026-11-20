@@ -1,8 +1,8 @@
-// Worker desacoplado: consome as filas SQS e executa o trabalho pesado fora da API.
-//  - fila de banners       -> redimensiona a imagem do jogo (sharp) e grava o thumbnail no S3;
-//  - fila de ingressos     -> gera o PDF do ingresso com QR code e grava no S3 (privado);
-//  - fila de notificações  -> envia o e-mail de confirmação ao cliente (SNS e-mail).
-// As duas últimas recebem o MESMO evento PEDIDO_CONFIRMADO, publicado uma vez no SNS (fan-out).
+// Worker desacoplado: consome as filas do RabbitMQ e executa o trabalho pesado fora da API.
+//  - banner.tasks         -> redimensiona a imagem do jogo (sharp) e grava o thumbnail;
+//  - tickets.tasks        -> gera o PDF do ingresso com QR code e grava (privado);
+//  - notifications.tasks  -> envia o e-mail de confirmação ao cliente.
+// As duas últimas recebem o MESMO evento PEDIDO_CONFIRMADO, publicado uma vez no exchange fanout (order.events).
 // Também devolve ao estoque as reservas de checkout vencidas.
 // Reaproveita as mesmas camadas da API (src/lib e src/modules/*/model).
 const sharp = require('sharp');
@@ -21,7 +21,7 @@ const db = require('./src/lib/db');
 const { APP_PUBLIC_URL } = require('./src/config');
 
 // Após N tentativas a tarefa é dada como perdida e a mensagem sai da fila
-// (a DLQ de cada fila captura mensagens que derrubam o processo antes disso).
+// (a DLQ de cada fila captura mensagens ilegíveis ou que o handler rejeitou com erro).
 const MAX_ATTEMPTS = 3;
 const SWEEP_INTERVAL_MS = 15000;
 
@@ -144,12 +144,6 @@ async function processNotification(task, { receiveCount = 1 } = {}) {
 
 const HANDLERS = { banner: processMessage, ticket: processTicket, notification: processNotification };
 
-// Tarefas da fila local (desenvolvimento): o tipo vem na própria mensagem
-function localHandler(task) {
-  if (task.type === 'ORDER_CONFIRMED') return HANDLERS[task.target];
-  return processMessage;
-}
-
 // Devolve ao estoque as reservas de checkout vencidas
 async function sweepReservations() {
   try {
@@ -166,89 +160,73 @@ async function sweepReservations() {
   }
 }
 
-async function pollQueue({ kind, url }) {
-  let processed = 0;
-  let messages = [];
-  try {
-    messages = await queue.receiveTasks(url);
-  } catch (error) {
-    console.warn(`[Worker SQS] Erro ao buscar mensagens (${kind}):`, error.message);
-    return 0;
-  }
-  for (const item of messages) {
-    const done = await HANDLERS[kind](item.data, { receiveCount: item.receiveCount });
-    if (!done) continue;
-    try {
-      await queue.deleteMessage(url, item.receiptHandle);
-      processed++;
-    } catch (delErr) {
-      console.warn(`[Worker SQS] Erro ao deletar mensagem (${kind}):`, delErr.message);
-    }
-  }
-  return processed;
-}
-
+// Processa uma vez tudo que está nas filas (worker --once e testes) e limpa as reservas vencidas.
 async function runOnce() {
   let processedCount = 0;
-
-  // 1. Filas AWS SQS, em paralelo (long polling em cada uma)
-  if (queue.hasSqs()) {
-    const counts = await Promise.all(queue.configuredQueues().map(pollQueue));
-    processedCount += counts.reduce((a, b) => a + b, 0);
+  for (const kind of Object.keys(HANDLERS)) {
+    processedCount += await queue.drain(kind, HANDLERS[kind]);
   }
-
-  // 2. Fila local (fallback para dev)
-  let localTask = queue.pullLocalTask();
-  while (localTask) {
-    await localHandler(localTask)(localTask, { receiveCount: MAX_ATTEMPTS });
-    processedCount++;
-    localTask = queue.pullLocalTask();
-  }
-
-  // 3. Reservas vencidas
   await sweepReservations();
-
   return processedCount;
 }
 
 let isRunning = true;
+let sweepTimer = null;
+let resubscribing = false;
+
+// Um consumidor por fila: o broker entrega as mensagens assim que chegam (sem polling)
+async function subscribeAll() {
+  await queue.connect();
+  for (const kind of Object.keys(HANDLERS)) {
+    await queue.consume(kind, HANDLERS[kind]);
+  }
+}
+
+async function resubscribe() {
+  if (!isRunning || resubscribing) return;
+  resubscribing = true;
+  try {
+    while (isRunning) {
+      try {
+        await subscribeAll();
+        console.log('[Worker] Reinscrito nas filas do RabbitMQ.');
+        return;
+      } catch (err) {
+        console.warn('[Worker] RabbitMQ indisponível, nova tentativa em 3s:', err.message);
+        await new Promise((r) => setTimeout(r, 3000));
+      }
+    }
+  } finally {
+    resubscribing = false;
+  }
+}
 
 async function startLoop() {
-  if (!db.isConfigured()) {
-    console.error('[Worker] PostgreSQL não configurado: defina DATABASE_URL. Encerrando.');
-    process.exit(1);
-  }
   console.log('========================================================');
   console.log('🚀 Worker desacoplado iniciado');
-  console.log(`📡 Filas SQS: ${queue.configuredQueues().map((q) => q.kind).join(', ') || 'nenhuma (fila local)'}`);
+  console.log(`🐰 RabbitMQ: ${queue.isConfigured() ? 'configurado' : 'NÃO CONFIGURADO'}`);
   console.log(`🗄️ PostgreSQL: ${db.isConfigured() ? 'Conectado' : 'NÃO CONFIGURADO'}`);
   console.log(`📦 S3: ${process.env.S3_BUCKET_NAME || 'Local uploads/'}`);
   console.log(`✉️ E-mail: ${notifier.isEnabled() ? 'Amazon SNS (e-mail)' : 'local (data/outbox)'}`);
   console.log('========================================================');
 
-  let lastSweep = 0;
-  while (isRunning) {
-    try {
-      if (queue.hasSqs()) {
-        await Promise.all(queue.configuredQueues().map(pollQueue));
-        if (Date.now() - lastSweep > SWEEP_INTERVAL_MS) {
-          lastSweep = Date.now();
-          await sweepReservations();
-        }
-      } else {
-        await runOnce();
-        await new Promise((resolve) => setTimeout(resolve, 3000));
-      }
-    } catch (err) {
-      console.error('[Worker Loop] Erro na iteração:', err.message);
-    }
+  if (!db.isConfigured() || !queue.isConfigured()) {
+    console.error('[Worker] PostgreSQL e RabbitMQ são obrigatórios: defina DATABASE_URL e RABBITMQ_URL. Encerrando.');
+    process.exit(1);
   }
+
+  await subscribeAll();
+  // Se o RabbitMQ cair e voltar, a conexão é refeita e o worker precisa assinar as filas de novo
+  queue.onClose(resubscribe);
+  sweepTimer = setInterval(() => { sweepReservations(); }, SWEEP_INTERVAL_MS);
+  await sweepReservations();
 }
 
 function stop() {
   console.log('\n[Worker] Finalizando worker de forma graciosa...');
   isRunning = false;
-  closeRedis();
+  if (sweepTimer) clearInterval(sweepTimer);
+  Promise.allSettled([queue.close(), closeRedis()]).then(() => process.exit(0));
 }
 
 process.on('SIGINT', stop);
