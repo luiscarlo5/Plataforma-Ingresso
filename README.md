@@ -175,8 +175,7 @@ Para rodar a API/testes fora do Docker com Postgres e Redis em containers:
 ## 💻 Como Executar Localmente
 
 ### 1. Iniciar Banco e Cache Locais (Opcional)
-Sem `DATABASE_URL` a API usa um arquivo local (`backend/data/store.json`) — **apenas para desenvolvimento**.
-Para testar com PostgreSQL e Redis locais via Docker:
+O **PostgreSQL é obrigatório**: sem `DATABASE_URL` a API e o worker recusam subir (não existe mais modo em arquivo). Para rodar fora do Docker, use PostgreSQL e Redis em containers:
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d postgres redis   # exige o .env da raiz
 cd backend && cp .env.example .env   # DATABASE_URL: use a senha definida no .env da raiz
@@ -202,7 +201,7 @@ Acesse a interface no navegador em: `http://localhost:3000`
 cd backend
 npm test
 ```
-*Executa 18 testes: rotas da API, healthcheck, autenticação, validações, upload só de imagens, compras concorrentes por setor (nunca vende acima do estoque), setores, reserva temporária (confirmação, cancelamento, expiração e limpeza pelo worker), PDF + e-mail via fan-out, "Meus ingressos" (cada usuário só vê os próprios), log de auditoria e processamento desacoplado do Worker. Os testes usam pastas temporárias e podem ser repetidos à vontade. Funcionam em modo local e também com `DATABASE_URL`/`REDIS_URL` apontando para Postgres/Redis reais.*
+*Executa 18 testes: rotas da API, healthcheck, autenticação, validações, upload só de imagens, compras concorrentes por setor (nunca vende acima do estoque), setores, reserva temporária (confirmação, cancelamento, expiração e limpeza pelo worker), PDF + e-mail via fan-out, "Meus ingressos" (cada usuário só vê os próprios), log de auditoria e processamento desacoplado do Worker. Os testes usam pastas temporárias e podem ser repetidos à vontade. Exigem `DATABASE_URL` apontando para um PostgreSQL real (veja a seção acima) e usam pastas temporárias para fila e uploads.*
 
 ---
 
