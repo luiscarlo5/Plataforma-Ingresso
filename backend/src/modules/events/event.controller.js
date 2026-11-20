@@ -11,7 +11,7 @@ const { serverError } = require('../../lib/http');
 
 const eventKey = (id) => `events:${id}`;
 
-// Desacopla o processamento do banner (SNS -> SQS -> worker). Se a publicação falhar o jogo já foi salvo:
+// Desacopla o processamento do banner (RabbitMQ -> worker). Se a publicação falhar o jogo já foi salvo:
 // marcamos o processamento como "failed" em vez de perder a requisição.
 async function enqueueBanner(eventId, s3Info, file, bannerUrl) {
   try {

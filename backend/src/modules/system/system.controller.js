@@ -20,6 +20,7 @@ function health(req, res) {
       elasticache: !!(process.env.REDIS_HOST || process.env.REDIS_URL),
       s3: !!process.env.S3_BUCKET_NAME,
       dynamodb: !!process.env.DYNAMODB_TABLE_NAME,
+      rabbitmq: !!process.env.RABBITMQ_URL,
       sqsSns: !!(process.env.SQS_QUEUE_URL || process.env.SNS_TOPIC_ARN),
       orderFanout: !!(process.env.SNS_ORDER_EVENTS_TOPIC_ARN && process.env.SQS_TICKETS_QUEUE_URL && process.env.SQS_NOTIFICATIONS_QUEUE_URL),
       emailSns: !!process.env.SNS_CUSTOMER_EMAIL_TOPIC_ARN,

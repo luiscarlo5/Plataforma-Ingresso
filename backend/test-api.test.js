@@ -4,11 +4,11 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-// Os testes usam o PostgreSQL de verdade (não existe mais modo em arquivo). Suba um com:
-//   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d postgres redis
-// e rode: DATABASE_URL=postgresql://USUARIO:SENHA@127.0.0.1:5432/stadiumdb npm test
-if (!process.env.DATABASE_URL && !process.env.DB_HOST) {
-  console.error('Defina DATABASE_URL (PostgreSQL) para rodar os testes.');
+// Os testes usam PostgreSQL e RabbitMQ de verdade (não existe mais modo em arquivo). Suba um com:
+//   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d postgres redis rabbitmq
+// e rode: DATABASE_URL=postgresql://USUARIO:SENHA@127.0.0.1:5432/stadiumdb RABBITMQ_URL=amqp://USUARIO:SENHA@127.0.0.1:5672 npm test
+if ((!process.env.DATABASE_URL && !process.env.DB_HOST) || !process.env.RABBITMQ_URL) {
+  console.error('Defina DATABASE_URL (PostgreSQL) e RABBITMQ_URL (RabbitMQ) para rodar os testes.');
   process.exit(1);
 }
 
@@ -19,6 +19,7 @@ process.env.UPLOADS_DIR = path.join(tmpRoot, 'uploads');
 
 const app = require('./server.js');
 const worker = require('./worker.js');
+const queue = require('./src/lib/queue');
 
 let server;
 let baseUrl;
@@ -35,6 +36,7 @@ test.before(async () => {
 });
 
 test.after(async () => {
+  await queue.close();
   if (server) {
     await new Promise((resolve) => server.close(resolve));
   }
@@ -524,7 +526,8 @@ test('Pedido antigo sem PDF: pedir o ingresso reenvia para a fila e o PDF é ger
   const orderId = buy.body.order.id;
 
   // Simula um pedido feito antes da geração de PDF: sem tarefas na fila e criado há 1 hora
-  while (require('./src/lib/localStore').pullLocalTask()) { /* descarta o fan-out original */ }
+  await queue.purge('ticket'); // descarta o fan-out original
+  await queue.purge('notification');
   const pool = require('./src/lib/db').getPool();
   await pool.query("UPDATE orders SET created_at = NOW() - INTERVAL '1 hour' WHERE id = $1", [orderId]);
 
