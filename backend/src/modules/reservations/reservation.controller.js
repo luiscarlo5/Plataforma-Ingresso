@@ -2,7 +2,6 @@
 const Reservation = require('./reservation.model');
 const { logCrudAction } = require('../audit/audit.model');
 const { invalidateCache } = require('../../lib/cache');
-const { putMetric } = require('../../lib/metrics');
 const { serverError } = require('../../lib/http');
 const { MAX_TICKETS_PER_ORDER } = require('../../config');
 
@@ -30,7 +29,6 @@ async function create(req, res) {
     if (result.error === 'sold_out') return res.status(409).json({ message: 'Não há ingressos suficientes neste setor.' });
 
     await logCrudAction('CREATE', 'reservation', result.reservation);
-    putMetric('ReservationsCreated');
     return res.status(201).json({
       message: 'Ingressos reservados. Conclua a compra antes do prazo.',
       reservation: result.reservation,

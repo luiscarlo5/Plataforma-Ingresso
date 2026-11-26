@@ -1,10 +1,8 @@
-// CONTROLLER de sistema: healthcheck do ALB e carga de CPU para demonstrar o Auto Scaling.
+// CONTROLLER de sistema: healthcheck (usado pelo Compose e pelo painel admin) e carga de CPU para testes.
 const os = require('node:os');
 const { Worker } = require('node:worker_threads');
-const { getElasticityStatus } = require('./elasticity.service');
-const { serverError } = require('../../lib/http');
 
-// GET /health - usado pelo health check do ALB e pelo painel admin
+// GET /health - usado pelo healthcheck do Compose e pelo painel admin
 function health(req, res) {
   res.json({
     status: 'ok',
@@ -14,17 +12,12 @@ function health(req, res) {
       platform: os.platform(),
       uptime: process.uptime()
     },
-    awsServices: {
-      ec2: process.env.EC2_INSTANCE_ID || 'executando-na-instancia-ec2',
-      rds: !!(process.env.DATABASE_URL || process.env.DB_HOST),
-      elasticache: !!(process.env.REDIS_HOST || process.env.REDIS_URL),
+    services: {
+      postgres: !!(process.env.DATABASE_URL || process.env.DB_HOST),
+      redis: !!(process.env.REDIS_HOST || process.env.REDIS_URL),
       dynamodb: !!process.env.DYNAMODB_TABLE_NAME,
       minio: !!process.env.MINIO_ENDPOINT,
-      rabbitmq: !!process.env.RABBITMQ_URL,
-      sqsSns: !!(process.env.SQS_QUEUE_URL || process.env.SNS_TOPIC_ARN),
-      orderFanout: !!(process.env.SNS_ORDER_EVENTS_TOPIC_ARN && process.env.SQS_TICKETS_QUEUE_URL && process.env.SQS_NOTIFICATIONS_QUEUE_URL),
-      emailSns: !!process.env.SNS_CUSTOMER_EMAIL_TOPIC_ARN,
-      cloudwatchMetrics: !!process.env.METRICS_NAMESPACE
+      rabbitmq: !!process.env.RABBITMQ_URL
     }
   });
 }
@@ -37,13 +30,12 @@ const BURN_CODE = `
 `;
 
 // Threads de carga ativas. Limitamos ao dobro dos vCPUs para não sufocar a thread principal
-// (que precisa responder ao /health do ALB) quando várias requisições /stress chegam juntas.
+// (que precisa responder ao /health) quando várias requisições /stress chegam juntas.
 let activeBurners = 0;
 const vcpus = Math.max(1, os.cpus().length);
 
-// GET /stress (admin) - limite de 30s por requisição, abaixo do idle timeout de 60s do ALB.
-// Uma thread por vCPU: a EC2 t3.micro tem 2 vCPUs e o CloudWatch mede a média de TODAS elas,
-// então um laço em uma única thread só chegaria a ~50% e nunca passaria dos 70% do alarme.
+// GET /stress (admin) - limite de 30s por requisição.
+// Uma thread por vCPU, para ocupar todos os núcleos do container (um laço em uma única thread usaria só um).
 // As threads rodam fora do event loop, então o /health continua respondendo.
 function stress(req, res) {
   const requested = Number(req.query.duration);
@@ -82,13 +74,4 @@ function stress(req, res) {
   }
 }
 
-// GET /admin/elasticity (admin) - instâncias, alarmes, CPU e atividades do Auto Scaling, lidos da AWS
-async function elasticity(req, res) {
-  try {
-    return res.json(await getElasticityStatus());
-  } catch (error) {
-    return serverError(res, 'Erro ao consultar o Auto Scaling.', error);
-  }
-}
-
-module.exports = { health, stress, elasticity };
+module.exports = { health, stress };
