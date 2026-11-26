@@ -12,7 +12,7 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 # Inclui o schema.sql, lido em runtime pelo src/lib/db.js
 COPY . .
-# Única pasta gravável: o outbox de e-mails (usado só quando não há SNS). Pertence ao usuário não-root
+# Única pasta gravável: o outbox de e-mails (notificações por e-mail). Pertence ao usuário não-root
 RUN mkdir -p /data && chown -R node:node /data
 USER node
 EXPOSE 3000

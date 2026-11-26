@@ -1,4 +1,4 @@
--- Esquema Relacional (Amazon RDS PostgreSQL) para Loja de Ingressos.
+-- Esquema Relacional (PostgreSQL) para Loja de Ingressos.
 -- Fonte única: também é executado pelo server.js na inicialização (idempotente).
 
 CREATE TABLE IF NOT EXISTS events (

@@ -22,7 +22,7 @@ app.use(cors());
 app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: true }));
 
-// Só serve o site quando o backend roda sozinho (dev local e AWS do Trabalho 1). No Docker Compose o
+// Só serve o site quando o backend roda sozinho (dev local). No Docker Compose o
 // frontend é o container nginx e o compose define SERVE_FRONTEND=false.
 if (process.env.SERVE_FRONTEND !== 'false') {
   app.use(express.static(FRONTEND_DIR, { extensions: ['html'] }));
@@ -30,7 +30,7 @@ if (process.env.SERVE_FRONTEND !== 'false') {
 
 
 // Nenhuma rota de dados atende antes do schema do PostgreSQL estar pronto (o /health responde sempre,
-// para o ALB não derrubar a instância enquanto ela inicializa).
+// para o healthcheck não derrubar o container enquanto ele inicializa).
 app.use((req, res, next) => {
   if (req.path === '/health') return next();
   return app.locals.ready.then(

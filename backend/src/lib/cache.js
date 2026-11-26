@@ -1,5 +1,5 @@
-// AMAZON ELASTICACHE (Redis) - Camada de Cache.
-// O cache é opcional: se o Redis estiver fora do ar, a API segue direto no RDS.
+// REDIS - Camada de Cache.
+// O cache é opcional: se o Redis estiver fora do ar, a API segue direto no PostgreSQL.
 const Redis = require('redis');
 
 let redisClient = null;
@@ -28,15 +28,15 @@ async function connectRedis() {
           reconnectStrategy: (retries) => (!everReady && retries >= 2 ? new Error('Redis indisponível') : Math.min(retries * 200 + 100, 3000))
         }
       });
-      client.on('error', (err) => console.warn('[ElastiCache Redis] Aviso:', err.message));
+      client.on('error', (err) => console.warn('[Redis] Aviso:', err.message));
       client.on('ready', () => { everReady = true; });
       try {
         await client.connect();
         redisClient = client;
-        console.log('[ElastiCache Redis] Conectado com sucesso.');
+        console.log('[Redis] Conectado com sucesso.');
         return client;
       } catch (error) {
-        console.warn('[ElastiCache Redis] Erro ao conectar:', error.message);
+        console.warn('[Redis] Erro ao conectar:', error.message);
         redisRetryAfter = Date.now() + 15000;
         try { client.destroy(); } catch (_) { /* já fechado */ }
         return null;
@@ -61,7 +61,7 @@ async function getCached(key, fetcher, ttlSeconds = 60) {
       return JSON.parse(cached);
     }
   } catch (error) {
-    console.warn(`[ElastiCache Redis] Erro ao ler cache de ${key}:`, error.message);
+    console.warn(`[Redis] Erro ao ler cache de ${key}:`, error.message);
     return fetcher();
   }
 
@@ -70,7 +70,7 @@ async function getCached(key, fetcher, ttlSeconds = 60) {
     try {
       await redis.set(key, JSON.stringify(fresh), { EX: ttlSeconds });
     } catch (error) {
-      console.warn(`[ElastiCache Redis] Erro ao gravar cache de ${key}:`, error.message);
+      console.warn(`[Redis] Erro ao gravar cache de ${key}:`, error.message);
     }
   }
   return fresh;
@@ -82,9 +82,9 @@ async function invalidateCache(keys = ['events:list']) {
 
   try {
     await redis.del(keys);
-    console.log(`[ElastiCache Redis] Cache invalidado: ${keys.join(', ')}`);
+    console.log(`[Redis] Cache invalidado: ${keys.join(', ')}`);
   } catch (error) {
-    console.warn('[ElastiCache Redis] Erro ao invalidar cache:', error.message);
+    console.warn('[Redis] Erro ao invalidar cache:', error.message);
   }
 }
 
