@@ -9,7 +9,14 @@ x-backend-env: &backend-env
   MINIO_BUCKET: ${MINIO_BUCKET}
   MINIO_ACCESS_KEY: ${MINIO_ROOT_USER}
   MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
-  DATA_DIR: /data # só o outbox de e-mails (sem SNS)
+  # DynamoDB (auditoria): por padrão o container "dynamodb" (DynamoDB Local). Para usar o da AWS, veja o .env.example
+  DYNAMODB_TABLE_NAME: ${DYNAMODB_TABLE_NAME:-stadium-audit-logs}
+  DYNAMODB_ENDPOINT: ${DYNAMODB_ENDPOINT-http://dynamodb:8000}
+  AWS_REGION: ${AWS_REGION:-us-east-1}
+  AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-local}
+  AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-local}
+  AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
+  DATA_DIR: /data # só o outbox de e-mails
   # O site é servido pelo container frontend (nginx), não pela API
   SERVE_FRONTEND: "false"
 
@@ -74,6 +81,24 @@ services:
       start_period: 10s
     restart: unless-stopped
 
+  # DynamoDB Local: o mesmo DynamoDB da AWS (API idêntica), rodando em container. Guarda a auditoria das ações.
+  # Roda como root porque o volume nomeado nasce de root e a imagem não tem a pasta de dados.
+  dynamodb:
+    image: amazon/dynamodb-local:latest
+    user: root
+    command: ["-jar", "DynamoDBLocal.jar", "-sharedDb", "-dbPath", "/data"]
+    volumes:
+      - dynamodata:/data
+    networks: [backend-net]
+    healthcheck:
+      # Sem -f: qualquer resposta HTTP (até 400) prova que o servidor está de pé
+      test: ["CMD-SHELL", "curl -s -o /dev/null http://localhost:8000"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    restart: unless-stopped
+
   redis:
     image: redis:7-alpine
     networks: [backend-net]
@@ -99,6 +124,8 @@ services:
         condition: service_healthy
       minio:
         condition: service_healthy
+      dynamodb:
+        condition: service_healthy
     networks: [backend-net, frontend-net]
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://localhost:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
@@ -121,6 +148,8 @@ services:
       rabbitmq:
         condition: service_healthy
       minio:
+        condition: service_healthy
+      dynamodb:
         condition: service_healthy
       backend:
         condition: service_healthy
@@ -148,3 +177,4 @@ volumes:
   appdata:
   rabbitmqdata:
   miniodata:
+  dynamodata:
