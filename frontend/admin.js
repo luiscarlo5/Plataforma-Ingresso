@@ -79,10 +79,7 @@ document.querySelectorAll('.tab').forEach((tab) =>
     if (tab.dataset.tab === 'games') loadGames();
     if (tab.dataset.tab === 'orders') loadOrders();
     if (tab.dataset.tab === 'audit') loadAudit();
-    if (tab.dataset.tab === 'infra') {
-      loadHealth();
-      startElasticityPolling();
-    }
+    if (tab.dataset.tab === 'infra') loadHealth();
   })
 );
 
@@ -265,18 +262,13 @@ async function loadHealth() {
     const res = await fetch(`${API}/health`);
     const h = await res.json();
     seeHost(h.instance?.hostname);
-    const svc = h.awsServices || {};
+    const svc = h.services || {};
     const cards = [
-      ['💻', 'EC2 + ALB + ASG', true, h.instance?.hostname || 'ativo'],
-      ['🐘', 'RDS PostgreSQL', svc.rds],
-      ['⚡', 'ElastiCache Redis', svc.elasticache],
-      ['🪣', 'MinIO (arquivos)', svc.minio],
+      ['🐘', 'PostgreSQL (dados)', svc.postgres],
+      ['⚡', 'Redis (cache)', svc.redis],
       ['📝', 'DynamoDB (auditoria)', svc.dynamodb],
-      ['🐰', 'RabbitMQ (filas + fan-out)', svc.rabbitmq],
-      ['📬', 'SQS / SNS (banners)', svc.sqsSns],
-      ['🔀', 'SNS fan-out (PDF + e-mail)', svc.orderFanout],
-      ['✉️', 'E-mail via SNS', svc.emailSns],
-      ['📈', 'CloudWatch (métricas)', svc.cloudwatchMetrics]
+      ['🪣', 'MinIO (arquivos)', svc.minio],
+      ['🐰', 'RabbitMQ (filas + fan-out)', svc.rabbitmq]
     ];
     $('aws-grid').innerHTML = cards.map(([ico, name, ok, extra]) => `<div class="aws-card">
       <div class="ico">${ico}</div><h4>${esc(name)}</h4>
@@ -285,7 +277,7 @@ async function loadHealth() {
 }
 $('refresh-health').addEventListener('click', loadHealth);
 
-/* ---------- Teste de elasticidade: carga pelo navegador ---------- */
+/* ---------- Teste de carga pelo navegador ---------- */
 let stress = null;
 const fmtClock = (secs) => `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`;
 
@@ -328,7 +320,6 @@ function startStress() {
       seeHost(h.instance?.hostname);
     } catch (_) { /* ignora */ }
   }, 3000);
-  startElasticityPolling();
 }
 
 function stopStress() {
@@ -343,104 +334,6 @@ function stopStress() {
 
 $('stress-start').addEventListener('click', startStress);
 $('stress-stop').addEventListener('click', stopStress);
-
-/* ---------- Auto Scaling ao vivo (dados da AWS via /admin/elasticity) ---------- */
-let elasticityTimer = null;
-
-function startElasticityPolling() {
-  if (elasticityTimer) return;
-  loadElasticity();
-  elasticityTimer = setInterval(loadElasticity, 5000);
-}
-
-const ptTime = (iso) => new Date(iso).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-
-function describeActivity(a) {
-  const id = (a.description.match(/i-[0-9a-f]+/) || [''])[0];
-  const byAlarm = /alarm/i.test(a.cause || '');
-  if (/^Launching/i.test(a.description)) return { icon: '🟢', text: `Nova instância criada ${id}`, why: byAlarm ? 'scale-out (CPU > 70%)' : 'reposição / capacidade desejada' };
-  if (/^Terminating/i.test(a.description)) return { icon: '🔴', text: `Instância encerrada ${id}`, why: byAlarm ? 'scale-in (CPU < 25%)' : 'substituição / manual' };
-  return { icon: '•', text: a.description, why: '' };
-}
-
-const ACTIVITY_STATUS = {
-  Successful: 'concluída', InProgress: 'em andamento', Failed: 'falhou', Cancelled: 'cancelada',
-  WaitingForELBConnectionDraining: 'drenando conexões', PreInService: 'iniciando', WaitingForSpotInstanceId: 'aguardando',
-  MidLifecycleAction: 'em andamento', WaitingForInstanceWarmup: 'aquecendo'
-};
-
-const LIFECYCLE = {
-  InService: 'em serviço', Pending: 'iniciando', 'Pending:Wait': 'iniciando', 'Pending:Proceed': 'iniciando',
-  Terminating: 'encerrando', 'Terminating:Wait': 'encerrando', Terminated: 'encerrada'
-};
-
-function chartSvg(cpu, inst) {
-  const W = 520; const H = 170; const L = 30; const R = 26; const T = 10; const B = 22;
-  const all = [...cpu, ...inst].map((p) => new Date(p.t).getTime());
-  if (!all.length) return '<div class="empty" style="padding:30px">Sem dados de CPU ainda (as métricas chegam a cada minuto).</div>';
-  const t0 = Math.min(...all); const t1 = Math.max(...all, t0 + 60000);
-  const x = (t) => L + ((new Date(t).getTime() - t0) / (t1 - t0)) * (W - L - R);
-  const yCpu = (v) => T + (1 - v / 100) * (H - T - B);
-  const yInst = (v) => T + (1 - v / 4) * (H - T - B);
-  const cpuPath = cpu.map((p, i) => `${i ? 'L' : 'M'}${x(p.t).toFixed(1)},${yCpu(p.v).toFixed(1)}`).join(' ');
-  const instPath = inst.map((p, i) => {
-    const px = x(p.t).toFixed(1); const py = yInst(p.v).toFixed(1);
-    return i ? `H${px} V${py}` : `M${px},${py}`;
-  }).join(' ');
-  const ticks = [0, 25, 50, 70, 100].map((v) => `<text x="${L - 4}" y="${yCpu(v) + 3}" class="ax" text-anchor="end">${v}</text>`).join('');
-  const instTicks = [1, 2, 3].map((v) => `<text x="${W - R + 4}" y="${yInst(v) + 3}" class="ax inst">${v}</text>`).join('');
-  const times = [t0, (t0 + t1) / 2, t1].map((t, i) => `<text x="${x(t)}" y="${H - 6}" class="ax" text-anchor="${['start', 'middle', 'end'][i]}">${new Date(t).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</text>`).join('');
-  return `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">
-    <rect x="${L}" y="${T}" width="${W - L - R}" height="${H - T - B}" class="plot" />
-    <line x1="${L}" x2="${W - R}" y1="${yCpu(70)}" y2="${yCpu(70)}" class="lim hi" />
-    <line x1="${L}" x2="${W - R}" y1="${yCpu(25)}" y2="${yCpu(25)}" class="lim lo" />
-    ${ticks}${instTicks}${times}
-    <path d="${instPath}" class="inst-line" />
-    <path d="${cpuPath}" class="cpu-line" />
-  </svg>`;
-}
-
-async function loadElasticity() {
-  try {
-    const d = await api('/admin/elasticity');
-    if (!d.available) {
-      $('as-live').classList.add('hidden');
-      $('as-unavailable').textContent = d.reason || 'Indisponível fora da AWS.';
-      $('as-unavailable').classList.remove('hidden');
-      return;
-    }
-    $('as-unavailable').classList.add('hidden');
-    $('as-live').classList.remove('hidden');
-    if (d.dashboardUrl) $('link-dashboard').href = d.dashboardUrl; // link direto para o dashboard deste projeto
-    const g = d.group;
-    $('as-inservice').textContent = g.inService;
-    $('as-desired').textContent = g.desired;
-    $('as-max').textContent = g.max;
-    const last = d.cpu[d.cpu.length - 1];
-    $('as-cpu').textContent = last ? `${Math.round(last.v)}%` : '–';
-
-    $('as-alarms').innerHTML = d.alarms.map((a) => {
-      const high = /high/.test(a.name);
-      const label = high ? 'CPU > 70% (scale-out)' : 'CPU < 25% (scale-in)';
-      return `<span class="as-alarm ${a.state === 'ALARM' ? (high ? 'fire' : 'calm') : ''}">${esc(label)}: <b>${esc(a.state)}</b></span>`;
-    }).join('');
-
-    $('as-chart').innerHTML = chartSvg(d.cpu, d.inServiceHistory);
-
-    $('as-instances').innerHTML = g.instances.length
-      ? g.instances.map((i) => `<li><span>${esc(i.id)} · ${esc(i.zone)}</span><span class="lc ${esc(i.state.split(':')[0])}">${esc(LIFECYCLE[i.state] || i.state)} · ${esc(i.health === 'Healthy' ? 'saudável' : 'não saudável')}</span></li>`).join('')
-      : '<li><span>—</span><span>nenhuma</span></li>';
-
-    $('as-activities').innerHTML = d.activities.map((a) => {
-      const x = describeActivity(a);
-      return `<li><span class="when">${esc(ptTime(a.time))}</span><span>${x.icon} ${esc(x.text)}${x.why ? ` <small>(${esc(x.why)})</small>` : ''}</span><span class="st">${esc(ACTIVITY_STATUS[a.status] || a.status)}</span></li>`;
-    }).join('') || '<li><span>—</span><span>sem atividades</span></li>';
-
-    $('as-updated').textContent = `atualizado às ${new Date().toLocaleTimeString('pt-BR')}`;
-  } catch (e) {
-    $('as-updated').textContent = `falha ao consultar: ${e.message}`;
-  }
-}
 
 /* ---------- Início ---------- */
 if (sessionStorage.getItem(TOKEN_KEY)) {

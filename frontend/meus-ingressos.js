@@ -113,7 +113,7 @@ async function downloadTicket(orderId, button) {
   }
 }
 
-// Notificações por e-mail (SNS): mostra o estado e permite ativar / reenviar a confirmação
+// Notificações por e-mail: mostra o estado e permite ativar
 async function renderEmailCard() {
   const card = $('email-card');
   try {
@@ -122,11 +122,10 @@ async function renderEmailCard() {
     const { status } = await res.json();
     const texts = {
       confirmed: '📧 Notificações por e-mail <strong>ativas</strong>: cada compra chega na sua caixa de entrada com o link do PDF.',
-      pending: '📧 Falta confirmar: abra o e-mail <strong>“AWS Notification - Subscription Confirmation”</strong> (veja o spam) e clique em <em>Confirm subscription</em>.',
       none: '📧 Receba seus ingressos por e-mail a cada compra.',
-      local: '📧 Ambiente local: os e-mails são gravados em <code>backend/data/outbox</code>.'
+      local: '📧 Os e-mails de confirmação são gravados na caixa de saída do servidor (<code>/data/outbox</code>).'
     };
-    const action = status === 'pending' ? 'Reenviar confirmação' : status === 'none' ? 'Ativar e-mails' : '';
+    const action = status === 'none' ? 'Ativar e-mails' : '';
     card.innerHTML = `${texts[status] || texts.none}${action ? ` <button type="button" class="btn btn-ghost btn-sm" id="email-subscribe">${action}</button>` : ''}`;
     card.classList.remove('hidden');
     const btn = $('email-subscribe');
