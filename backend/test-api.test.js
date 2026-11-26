@@ -69,17 +69,14 @@ async function getUserToken() {
 
 const authJson = (token) => ({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` });
 
-test('GET /health responde status ok e informa os serviços AWS', async () => {
+test('GET /health responde status ok e informa os serviços', async () => {
   const res = await fetchJson('/health');
   assert.equal(res.status, 200);
   assert.equal(res.body.status, 'ok');
-  assert.ok(res.body.awsServices);
-  assert.ok('ec2' in res.body.awsServices);
-  assert.ok('rds' in res.body.awsServices);
-  assert.ok('elasticache' in res.body.awsServices);
-  assert.ok('minio' in res.body.awsServices);
-  assert.ok('dynamodb' in res.body.awsServices);
-  assert.ok('sqsSns' in res.body.awsServices);
+  assert.ok(res.body.services);
+  for (const name of ['postgres', 'redis', 'dynamodb', 'minio', 'rabbitmq']) {
+    assert.ok(name in res.body.services, `faltou o serviço ${name}`);
+  }
 });
 
 test('GET /events lista eventos disponíveis', async () => {
@@ -545,17 +542,11 @@ test('Pedido antigo sem PDF: pedir o ingresso reenvia para a fila e o PDF é ger
   assert.ok(!logs.includes('EMAIL_SENT'), 'regerar o PDF não reenvia o e-mail');
 });
 
-test('GET /admin/elasticity: sem AWS responde indisponível e exige admin', async () => {
-  const res = await fetchJson('/admin/elasticity');
-  assert.equal(res.status, 200);
-  assert.equal(res.body.available, false);
-});
-
 test('GET /users/me/email-notifications informa o estado da assinatura de e-mail', async () => {
   const token = await getUserToken();
   const res = await fetchJson('/users/me/email-notifications', { headers: authJson(token) });
   assert.equal(res.status, 200);
-  assert.equal(res.body.status, 'local', 'sem SNS configurado (testes) o e-mail é local');
+  assert.equal(res.body.status, 'local', 'o e-mail é gravado na caixa de saída local');
   const anon = await fetchJson('/users/me/email-notifications');
   assert.equal(anon.status, 401);
 });

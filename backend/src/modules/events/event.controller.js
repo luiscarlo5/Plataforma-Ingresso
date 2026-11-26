@@ -88,7 +88,7 @@ async function create(req, res) {
       createdAt: new Date().toISOString()
     };
 
-    const created = await Event.create(newEvent); // RDS (jogo + setores, numa transação)
+    const created = await Event.create(newEvent); // PostgreSQL (jogo + setores, numa transação)
     newEvent.sectors = created.sectors;
     await logCrudAction('CREATE', 'event', newEvent); // DynamoDB
     await invalidateCache(['events:list']); // Redis

@@ -9,14 +9,14 @@ const sharp = require('sharp');
 const Event = require('./src/modules/events/event.model');
 const Order = require('./src/modules/orders/order.model');
 const Reservation = require('./src/modules/reservations/reservation.model');
-const { logCrudAction } = require('./src/modules/audit/audit.model');
+const audit = require('./src/modules/audit/audit.model');
+const { logCrudAction } = audit;
 const { generateTicketPdf } = require('./src/modules/tickets/ticket.pdf');
 const { signDownloadToken } = require('./src/modules/tickets/ticket.token');
 const { invalidateCache, closeRedis } = require('./src/lib/cache');
 const storage = require('./src/lib/storage');
 const queue = require('./src/lib/queue');
 const notifier = require('./src/lib/notifier');
-const { putMetric } = require('./src/lib/metrics');
 const db = require('./src/lib/db');
 const { APP_PUBLIC_URL } = require('./src/config');
 
@@ -70,7 +70,7 @@ async function processMessage(task, { receiveCount = 1 } = {}) {
     const thumbnailUrl = await storage.saveThumbnail(resizedBuffer); // MinIO
     await Event.update(task.eventId, { thumbnailUrl, processingStatus: 'completed' }); // PostgreSQL
     await invalidateCache(['events:list', `events:${task.eventId}`]); // Redis
-    await logCrudAction('RESCALE_BANNER_COMPLETED', 'banner_processing', { // DynamoDB
+    await logCrudAction('RESCALE_BANNER_COMPLETED', 'banner_processing', {
       eventId: task.eventId, originalUrl: task.bannerUrl || null, thumbnailUrl
     });
     console.log(`[Worker] Thumbnail pronto para o evento ${task.eventId}: ${thumbnailUrl}`);
@@ -93,7 +93,6 @@ async function processTicket(task, { receiveCount = 1 } = {}) {
     await storage.saveTicket(order.id, pdf); // MinIO (prefixo privado tickets/)
     await Order.setTicketStatus(order.id, 'ready'); // PostgreSQL
     await logCrudAction('TICKET_PDF_GENERATED', 'ticket', { orderId: order.id, bytes: pdf.length });
-    putMetric('TicketPdfsGenerated');
   }, async (error) => {
     if (order?.id) await Order.setTicketStatus(order.id, 'failed'); // permite pedir de novo pela tela
     await logCrudAction('TICKET_PDF_FAILED', 'ticket', { orderId: order?.id, reason: error.message, attempts: receiveCount });
@@ -136,7 +135,6 @@ async function processNotification(task, { receiveCount = 1 } = {}) {
     const { subject, text } = confirmationEmail(order, event);
     const sent = await notifier.sendEmail({ to: order.customerEmail, subject, text });
     await logCrudAction('EMAIL_SENT', 'notification', { orderId: order.id, to: order.customerEmail, provider: sent.provider });
-    putMetric('EmailsSent');
   }, async (error) => {
     await logCrudAction('EMAIL_FAILED', 'notification', { orderId: order?.id, reason: error.message, attempts: receiveCount });
   });
@@ -151,7 +149,6 @@ async function sweepReservations() {
     if (eventIds.length) {
       await invalidateCache(['events:list', ...eventIds.map((id) => `events:${id}`)]);
       console.log(`[Worker] Reservas vencidas devolvidas ao estoque (jogos: ${eventIds.join(', ')})`);
-      putMetric('ReservationSweeps');
     }
     return eventIds;
   } catch (error) {
@@ -207,7 +204,8 @@ async function startLoop() {
   console.log(`🐰 RabbitMQ: ${queue.isConfigured() ? 'configurado' : 'NÃO CONFIGURADO'}`);
   console.log(`🗄️ PostgreSQL: ${db.isConfigured() ? 'Conectado' : 'NÃO CONFIGURADO'}`);
   console.log(`📦 MinIO: ${storage.isConfigured() ? process.env.MINIO_ENDPOINT : 'NÃO CONFIGURADO'}`);
-  console.log(`✉️ E-mail: ${notifier.isEnabled() ? 'Amazon SNS (e-mail)' : 'local (data/outbox)'}`);
+  console.log(`📝 DynamoDB: ${audit.isConfigured() ? (process.env.DYNAMODB_ENDPOINT || 'AWS') : 'NÃO CONFIGURADO (auditoria só em memória)'}`);
+  console.log('✉️ E-mail: caixa de saída local (data/outbox)');
   console.log('========================================================');
 
   if (!db.isConfigured() || !queue.isConfigured() || !storage.isConfigured()) {

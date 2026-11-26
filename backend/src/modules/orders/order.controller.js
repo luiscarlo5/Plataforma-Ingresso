@@ -4,7 +4,6 @@ const Event = require('../events/event.model');
 const { logCrudAction } = require('../audit/audit.model');
 const { invalidateCache } = require('../../lib/cache');
 const queue = require('../../lib/queue');
-const { putMetric } = require('../../lib/metrics');
 const { serverError } = require('../../lib/http');
 const { MAX_TICKETS_PER_ORDER } = require('../../config');
 
@@ -67,9 +66,6 @@ async function create(req, res) {
     const { order } = result;
     await logCrudAction('ORDER', 'order', order);
     await invalidateCache(['events:list', `events:${order.eventId}`]);
-    putMetric('Orders');
-    putMetric('TicketsSold', order.quantity);
-    putMetric('Revenue', order.total, 'None');
     const provider = await publishConfirmed(order);
 
     return res.status(201).json({

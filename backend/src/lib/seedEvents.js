@@ -1,4 +1,4 @@
-// Jogos iniciais: semeados no RDS quando a tabela está vazia (e no store local em desenvolvimento).
+// Jogos iniciais: semeados no PostgreSQL quando a tabela está vazia.
 function seedEvents() {
   return [
     {

@@ -33,13 +33,12 @@ async function register(req, res) {
       return res.status(409).json({ message: 'E-mail já cadastrado.' });
     }
 
-    // Assina o e-mail no tópico SNS de notificações (a AWS envia um e-mail de confirmação).
-    // Falha aqui não impede o cadastro: o cliente pode pedir de novo em "Meus ingressos".
+    // Registra o e-mail para notificações (caixa de saída local). Falha aqui não impede o cadastro.
     let emailNotifications = 'none';
     try {
       emailNotifications = (await notifier.subscribe(user.email)).status;
     } catch (err) {
-      console.warn('[SNS] Não foi possível assinar o e-mail do cliente:', err.message);
+      console.warn('[E-mail] Não foi possível registrar o e-mail do cliente:', err.message);
     }
 
     return res.status(201).json({
@@ -83,13 +82,11 @@ async function emailStatus(req, res) {
   }
 }
 
-// POST /users/me/email-notifications - (re)envia o e-mail de confirmação da AWS
+// POST /users/me/email-notifications - (re)ativa as notificações por e-mail do cliente
 async function emailSubscribe(req, res) {
   try {
-    const current = await notifier.subscriptionStatus(req.user.email);
-    if (current === 'confirmed' || current === 'local') return res.json({ status: current });
     const { status } = await notifier.subscribe(req.user.email);
-    return res.status(202).json({ status, message: 'Enviamos um e-mail da AWS: clique em "Confirm subscription" para receber seus ingressos.' });
+    return res.json({ status });
   } catch (error) {
     return serverError(res, 'Erro ao ativar as notificações por e-mail.', error);
   }

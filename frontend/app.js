@@ -723,7 +723,7 @@ function renderTicket() {
   `;
 }
 
-// Como o ingresso chega ao cliente: PDF (gerado pelo worker) e e-mail (SNS)
+// Como o ingresso chega ao cliente: PDF (gerado pelo worker) e e-mail (fila do RabbitMQ)
 async function renderDelivery() {
   const box = $('ticket-delivery');
   box.textContent = 'Gerando o PDF do seu ingresso...';
@@ -733,9 +733,8 @@ async function renderDelivery() {
     const email = esc(state.user?.email || '');
     const messages = {
       confirmed: `📧 Enviamos o ingresso para <strong>${email}</strong>. Ele também fica em <a href="/meus-ingressos.html">Meus ingressos</a>.`,
-      pending: `📧 Para receber o ingresso por e-mail, confirme a mensagem <strong>“AWS Notification - Subscription Confirmation”</strong> enviada para ${email} (veja também o spam). Depois disso, as próximas compras chegam automaticamente.`,
       none: '📧 As notificações por e-mail não estão ativas. Ative em <a href="/meus-ingressos.html">Meus ingressos</a>.',
-      local: '📧 Ambiente local: o e-mail de confirmação foi gravado em <code>backend/data/outbox</code>.'
+      local: '📧 O e-mail de confirmação foi gravado na caixa de saída do servidor (<code>/data/outbox</code>).'
     };
     box.innerHTML = messages[status] || messages.none;
   } catch (e) {
