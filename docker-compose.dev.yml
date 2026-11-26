@@ -1,5 +1,5 @@
-# Somente desenvolvimento: publica Postgres e Redis em 127.0.0.1 para rodar a API/testes fora do Docker.
-#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d postgres redis
+# Somente desenvolvimento: publica os serviços em 127.0.0.1 para rodar a API/testes fora do Docker.
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d postgres redis rabbitmq minio dynamodb
 services:
   postgres:
     ports:
@@ -13,3 +13,6 @@ services:
   redis:
     ports:
       - "127.0.0.1:6379:6379"
+  dynamodb:
+    ports:
+      - "127.0.0.1:8000:8000"
