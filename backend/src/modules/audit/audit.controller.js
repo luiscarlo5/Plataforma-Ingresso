@@ -6,7 +6,7 @@ async function list(req, res) {
     return res.json(await AuditLog.listAuditLogs(100));
   } catch (error) {
     console.warn('[DynamoDB] Erro ao consultar logs:', error.message);
-    return res.json(AuditLog.localAuditLogs);
+    return res.status(503).json({ message: 'Auditoria indisponível: falha ao consultar o DynamoDB.' });
   }
 }
 

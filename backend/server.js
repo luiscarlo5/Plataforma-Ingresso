@@ -3,10 +3,11 @@ const app = require('./src/app');
 const bootstrap = require('./src/bootstrap');
 const { PORT } = require('./src/config');
 
-app.locals.ready = bootstrap();
+app.locals.ready = bootstrap().then(() => {
+  app.locals.initialized = true;
+});
 app.locals.ready.catch((err) => {
-  // Sem banco não há aplicação: falhar alto faz o Docker (restart) tentar de novo e evita gravar dados em outro lugar.
-  console.error('[Bootstrap] Falha ao inicializar o banco relacional:', err.message);
+  console.error('[Bootstrap] Falha ao inicializar a API:', err.message);
   process.exit(1);
 });
 

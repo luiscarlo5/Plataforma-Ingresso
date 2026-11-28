@@ -3,12 +3,16 @@ const os = require('node:os');
 const { Worker } = require('node:worker_threads');
 const { getElasticityStatus } = require('./elasticity.service');
 const { serverError } = require('../../lib/http');
+const { getStatus: getAuditStatus } = require('../audit/audit.model');
 
 // GET /health - usado pelo health check do ALB e pelo painel admin
 function health(req, res) {
-  res.json({
-    status: 'ok',
+  const auditStorage = getAuditStatus();
+  const ready = !auditStorage.required || req.app.locals.initialized;
+  res.status(ready ? 200 : 503).json({
+    status: ready ? 'ok' : 'unavailable',
     service: 'stadium-tickets-api',
+    auditStorage,
     instance: {
       hostname: os.hostname(),
       platform: os.platform(),
@@ -18,7 +22,7 @@ function health(req, res) {
       ec2: process.env.EC2_INSTANCE_ID || 'executando-na-instancia-ec2',
       rds: !!(process.env.DATABASE_URL || process.env.DB_HOST),
       elasticache: !!(process.env.REDIS_HOST || process.env.REDIS_URL),
-      dynamodb: !!process.env.DYNAMODB_TABLE_NAME,
+      dynamodb: auditStorage.reachable,
       minio: !!process.env.MINIO_ENDPOINT,
       rabbitmq: !!process.env.RABBITMQ_URL,
       sqsSns: !!(process.env.SQS_QUEUE_URL || process.env.SNS_TOPIC_ARN),

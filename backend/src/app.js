@@ -29,8 +29,7 @@ if (process.env.SERVE_FRONTEND !== 'false') {
 }
 
 
-// Nenhuma rota de dados atende antes do schema do PostgreSQL estar pronto (o /health responde sempre,
-// para o ALB não derrubar a instância enquanto ela inicializa).
+// As rotas de dados esperam o bootstrap. O /health pode informar que ele ainda está em andamento.
 app.use((req, res, next) => {
   if (req.path === '/health') return next();
   return app.locals.ready.then(

@@ -7,8 +7,10 @@
     "start": "node server.js",
     "worker": "node worker.js",
     "worker:once": "node worker.js --once",
+    "dynamodb:setup": "node scripts/setup-dynamodb.js",
+    "dynamodb:verify": "node scripts/verify-dynamodb.js",
     "dev": "node --watch server.js",
-    "test": "node --test --test-force-exit test-api.test.js"
+    "test": "node --test --test-force-exit test-api.test.js test-dynamodb.test.js"
   },
   "dependencies": {
     "@aws-sdk/client-auto-scaling": "^3.1150.0",

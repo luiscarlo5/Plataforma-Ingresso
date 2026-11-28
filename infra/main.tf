@@ -210,6 +210,7 @@ resource "aws_iam_policy" "app_permissions" {
         Effect = "Allow"
         Action = [
           "dynamodb:PutItem",
+          "dynamodb:GetItem",
           "dynamodb:Query",
           "dynamodb:Scan"
         ]

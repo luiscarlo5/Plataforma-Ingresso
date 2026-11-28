@@ -138,13 +138,14 @@ Para criar um novo CRUD, crie a pasta do módulo e registre suas rotas em `src/a
 ## 🐳 Executar com Docker Compose (Trabalho 2)
 
 Sobe tudo com um único comando: **PostgreSQL** (substitui o RDS) **RabbitMQ** (substitui SNS/SQS) e **MinIO** (substitui o S3), todos gerenciados por nós, mais Redis, backend (API), worker e frontend (nginx).
-Pré-requisitos: Docker e Docker Compose v2.
+Requer Docker com o comando `docker compose` e suporte à opção `--wait`.
 
 ```bash
-git clone <url-do-repositorio> && cd LojaArenaCastelao
+git clone https://github.com/luiscarlo5/Plataforma-Ingresso.git
+cd Plataforma-Ingresso
 cp .env.example .env          # troque as senhas e o JWT_SECRET
-docker compose up --build -d
-docker compose ps             # postgres, redis e backend devem ficar "healthy"
+docker compose up --build -d --wait
+docker compose ps
 ```
 
 Acesse **http://localhost:8080** (loja) e **http://localhost:8080/admin** (painel, senha = `ADMIN_PASSWORD`).
@@ -174,7 +175,57 @@ Para rodar a API/testes fora do Docker com Postgres e Redis em containers:
 
 **Arquivos (MinIO):** um bucket com dois prefixos. `banners/*` (original e miniatura) tem leitura anônima e o nginx o expõe em `/files/banners/` (só `GET`). `tickets/*` (PDF do ingresso) é privado: só a API lê do MinIO e entrega o PDF depois de validar o token do dono. O código usa o `@aws-sdk/client-s3` com `endpoint` e `forcePathStyle`, porque o MinIO fala o protocolo S3.
 
-> Migração em andamento: Postgres, RabbitMQ e MinIO já rodam em container. O DynamoDB segue como NoSQL na AWS (precisa de credenciais no `.env`); o e-mail ainda sai pela caixa local `outbox`.
+### DynamoDB gerenciado pela AWS (auditoria do Trabalho 2)
+
+Para a entrega, habilite o DynamoDB real da AWS. No `.env` da raiz, mantenha as variáveis do Compose e acrescente ou atualize as configurações abaixo:
+
+```dotenv
+AWS_REGION=us-east-1
+DYNAMODB_TABLE_NAME=stadium-tickets-audit-logs
+DYNAMODB_REQUIRED=true
+AWS_ACCESS_KEY_ID=
+AWS_SECRET_ACCESS_KEY=
+AWS_SESSION_TOKEN=
+```
+
+Use a região e as três credenciais temporárias mostradas no Learner Lab. O `.env` fica fora do Git. Proteja o arquivo com `chmod 600 .env`. Quando a sessão expirar, renove as credenciais no arquivo e recrie os containers. Na EC2, se a instância já tiver uma role com as permissões, deixe as três variáveis de credenciais ausentes.
+
+```bash
+docker compose build backend worker
+docker compose run --rm --no-deps backend npm run dynamodb:setup
+docker compose up --build -d --wait
+docker compose exec -T backend npm run dynamodb:verify
+```
+
+- O setup valida uma tabela existente ou cria uma com cobrança sob demanda, chave `id` e índice `by-time` (`pk`, `timestamp`). Requer `dynamodb:DescribeTable` e, se a tabela ainda não existir, `dynamodb:CreateTable`. Se o laboratório restringir a criação, use uma tabela compatível já provisionada na mesma conta e região.
+- Durante a execução a API e o worker precisam de `dynamodb:PutItem` na tabela e `dynamodb:Query` no índice. A verificação também precisa de `dynamodb:GetItem` na tabela. O Compose injeta as configurações nos dois containers a partir do `.env`.
+- A verificação cria um jogo temporário por meio da API, busca o registro `CREATE` pela mesma rota usada no painel e compara o resultado com uma leitura direta pela chave no DynamoDB. Ao final, remove o jogo e preserva seus registros de auditoria. Guarde a saída com os IDs do jogo e da auditoria. Para conferir visualmente, abra **Admin → Auditoria** e procure o mesmo ID no payload. No console AWS, confira o item usando o ID de auditoria.
+- Com `DYNAMODB_REQUIRED=true`, a API exige uma consulta bem-sucedida ao índice na inicialização. O campo `auditStorage` de `/health` informa o modo e o resultado da última consulta. Se uma consulta da auditoria falhar, o painel recebe HTTP 503 e o backend registra o erro. Para desenvolvimento offline, deixe `DYNAMODB_REQUIRED=false` e `DYNAMODB_TABLE_NAME` vazia para usar memória.
+
+### Evidências de funcionamento — 20/11/2026
+
+A validação acompanhou um único evento, `match-1795216263818-0912f4`, do upload do banner até a emissão do ingresso. O pedido correspondente foi `order-6968f120-71a9-460a-a1d1-1267121dfe1c`. Esses identificadores pertencem à execução local da equipe. Em uma instalação nova, use os identificadores gerados ao repetir o fluxo.
+
+| Verificação | Resultado observado |
+|---|---|
+| Inicialização pelo Compose | Sete serviços em execução. PostgreSQL, Redis, RabbitMQ, MinIO e backend passaram nos healthchecks. A loja respondeu com HTTP 200 e a API listou quatro eventos antes do cadastro de teste. |
+| Cadastro e banner | A API respondeu com HTTP 201 e confirmou o envio para `banner.tasks`. O processamento passou de `pending` para `completed`. O PNG baixado pela rota pública era idêntico ao original de 800 × 520 pixels. A miniatura JPEG tinha 400 × 260 pixels. |
+| Compra e persistência | Um ingresso de R$ 50,00 na Arquibancada Norte reduziu o estoque de 35 para 34. A consulta ao PostgreSQL retornou quantidade `1`, total `50.00`, status `confirmed` e ingresso `ready`. |
+| Mensageria e download | O log do worker registrou o mesmo pedido nas tarefas de PDF e de notificação, ambas na primeira tentativa. Pela API de **Meus ingressos**, o comprador baixou um PDF de 9.984 bytes. O texto do documento continha o identificador do pedido. |
+| Suíte de integração | 21 testes passaram, sem falhas ou testes pulados, em um projeto Compose isolado com PostgreSQL, RabbitMQ e MinIO. |
+| Auditoria | A API retornou a ação `CREATE` para o evento. Nessa execução, `/health` indicou `dynamodb: false` e a auditoria usou memória. A validação na AWS continua pendente. |
+
+Para repetir, cadastre um evento com banner no painel, compre um ingresso na loja e baixe o PDF em **Meus ingressos**. Use o ID da compra para localizar as duas tarefas no histórico do worker e consultar o registro persistido:
+
+```bash
+pedido='order-6968f120-71a9-460a-a1d1-1267121dfe1c'  # substitua pelo ID da sua compra
+docker compose logs worker | grep -F -- "$pedido"
+docker compose exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v pedido="$1"' sh "$pedido" <<'SQL'
+SELECT id, quantity, total, status, ticket_status FROM orders WHERE id = :'pedido';
+SQL
+```
+
+Para registrar a evidência do NoSQL na AWS, execute `npm run dynamodb:verify` conforme a seção acima e guarde a saída com o ID do registro.
 
 ---
 
@@ -207,7 +258,7 @@ Acesse a interface no navegador em: `http://localhost:3000`
 cd backend
 npm test
 ```
-*Executa 18 testes: rotas da API, healthcheck, autenticação, validações, upload só de imagens, compras concorrentes por setor (nunca vende acima do estoque), setores, reserva temporária (confirmação, cancelamento, expiração e limpeza pelo worker), PDF + e-mail via fan-out, "Meus ingressos" (cada usuário só vê os próprios), log de auditoria e processamento desacoplado do Worker. Os testes usam pastas temporárias e podem ser repetidos à vontade. Exigem PostgreSQL, RabbitMQ e MinIO reais (`DATABASE_URL`, `RABBITMQ_URL`, `MINIO_ENDPOINT`, `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY`; veja a seção acima). Não rode o worker do Compose ao mesmo tempo: ele consumiria as mensagens dos testes.*
+*Executa 21 testes de integração da API e três testes com o cliente DynamoDB simulado. A suíte de integração exige PostgreSQL, RabbitMQ e MinIO reais (`DATABASE_URL`, `RABBITMQ_URL`, `MINIO_ENDPOINT`, `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY`). Execute a suíte em uma pilha de teste, com auditoria em memória e sem outro consumidor nas filas para que o próprio teste processe as mensagens. Para provar a integração no DynamoDB gerenciado, use `dynamodb:verify`.*
 
 ---
 

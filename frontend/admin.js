@@ -271,16 +271,16 @@ async function loadHealth() {
       ['🐘', 'RDS PostgreSQL', svc.rds],
       ['⚡', 'ElastiCache Redis', svc.elasticache],
       ['🪣', 'MinIO (arquivos)', svc.minio],
-      ['📝', 'DynamoDB (auditoria)', svc.dynamodb],
+      ['📝', 'DynamoDB (auditoria)', svc.dynamodb, 'conectado', h.auditStorage?.mode === 'aws' ? 'indisponível' : 'modo em memória'],
       ['🐰', 'RabbitMQ (filas + fan-out)', svc.rabbitmq],
       ['📬', 'SQS / SNS (banners)', svc.sqsSns],
       ['🔀', 'SNS fan-out (PDF + e-mail)', svc.orderFanout],
       ['✉️', 'E-mail via SNS', svc.emailSns],
       ['📈', 'CloudWatch (métricas)', svc.cloudwatchMetrics]
     ];
-    $('aws-grid').innerHTML = cards.map(([ico, name, ok, extra]) => `<div class="aws-card">
+    $('aws-grid').innerHTML = cards.map(([ico, name, ok, extra, inactive]) => `<div class="aws-card">
       <div class="ico">${ico}</div><h4>${esc(name)}</h4>
-      <span class="badge ${ok ? 'ok' : 'off'}">${ok ? (extra || 'configurado') : 'não configurado'}</span></div>`).join('');
+      <span class="badge ${ok ? 'ok' : 'off'}">${esc(ok ? (extra || 'configurado') : (inactive || 'não configurado'))}</span></div>`).join('');
   } catch (e) { toast('Falha ao consultar /health'); }
 }
 $('refresh-health').addEventListener('click', loadHealth);
